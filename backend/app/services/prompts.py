@@ -17,11 +17,11 @@ LINUS_FINANCIAL_ANALYSIS_PROMPT = ChatPromptTemplate.from_messages([
     【输入数据】
     基金: {fund_info}
     走势: {history_summary}
-    估值指标: {valuation_data}
+    技术指标: {technical_indicators}
 
     【输出要求（严禁分步骤描述分析过程，直接合并为一段精简报告）】
-    1. 逻辑审计：重点分析估值偏差（实时vs净值）、技术位阶（高/低位）及风险特征。忽略个股细节，关注整体结构。
-    2. 最终结论：一句话总结当前基金的状态（高估/低估/正常/异常）。
+    1. 逻辑审计：重点分析技术指标（夏普比率、最大回撤、波动率）、技术位阶（高/低位）及风险特征。忽略个股细节，关注整体结构。
+    2. 最终结论：一句话总结当前基金的状态（高风险/低风险/正常/异常）。
     3. 操作建议：给出 1-2 条冷静、务实的操作指令（持有/止盈/观望/定投）。
 
     请输出纯 JSON 格式 (No Markdown)，包含字段: summary (毒舌一句话), risk_level (string), analysis_report (精简综合报告).

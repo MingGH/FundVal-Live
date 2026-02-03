@@ -94,19 +94,20 @@ class AIService:
 
         fund_id = fund_info.get("id")
         fund_name = fund_info.get("name", "未知基金")
-        
+
         # 1. Gather Data
-        # History (Last 30 days)
-        history = get_fund_history(fund_id, limit=30)
-        indicators = self._calculate_indicators(history)
-        
+        # History (Last 250 days for technical indicators)
+        history = get_fund_history(fund_id, limit=250)
+        indicators = self._calculate_indicators(history[:30] if len(history) >= 30 else history)
+
+        # Calculate technical indicators (Sharpe, Volatility, Max Drawdown)
+        technical_indicators = _calculate_technical_indicators(history)
+
         history_summary = "暂无历史数据"
         if history:
-            history_summary = f"近30日走势: 起始{history[0]['nav']} -> 结束{history[-1]['nav']}. {indicators['desc']}"
+            recent_history = history[:30]
+            history_summary = f"近30日走势: 起始{recent_history[0]['nav']} -> 结束{recent_history[-1]['nav']}. {indicators['desc']}"
 
-        # Valuation
-        valuation_data = f"实时估值: {fund_info.get('estimate', 'N/A')}, 估算涨跌: {fund_info.get('estRate', '0')}%"
-        
         # Prepare Fund Info Summary (Exclude detailed holdings to focus AI on Fund level)
         fund_summary = {
             "id": fund_id,
@@ -119,12 +120,12 @@ class AIService:
 
         # 2. Invoke LLM with Linus Prompt
         chain = LINUS_FINANCIAL_ANALYSIS_PROMPT | self.llm | StrOutputParser()
-        
+
         try:
             raw_result = await chain.ainvoke({
                 "fund_info": str(fund_summary),
                 "history_summary": history_summary,
-                "valuation_data": valuation_data
+                "technical_indicators": str(technical_indicators)
             })
             
             # 3. Parse Result
