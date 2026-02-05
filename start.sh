@@ -28,26 +28,29 @@ if ! command -v npm &> /dev/null; then
     exit 1
 fi
 
-# 2. Start Backend
-echo -e "${BLUE}>>> [1/2] Initializing Backend...${NC}"
+# 2. Build Frontend
+echo -e "${BLUE}>>> [1/2] Building Frontend...${NC}"
+cd frontend || exit
+if [ ! -d "node_modules" ]; then
+    npm install > /dev/null 2>&1
+fi
+npm run build > ../logs/frontend-build.log 2>&1
+cd ..
+
+if [ ! -d "frontend/dist" ]; then
+    echo -e "${RED}✘ Frontend build failed (Check logs/frontend-build.log)${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✔ Frontend built${NC}"
+
+# 3. Start Backend
+echo -e "${BLUE}>>> [2/2] Starting Backend...${NC}"
 cd backend || exit
 uv sync > /dev/null 2>&1
 # Start with nohup and redirect to root logs folder
 nohup uv run uvicorn app.main:app --port 21345 --host 0.0.0.0 > ../logs/backend.log 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > ../backend.pid
-cd ..
-
-# 3. Start Frontend
-echo -e "${BLUE}>>> [2/2] Initializing Frontend...${NC}"
-cd frontend || exit
-if [ ! -d "node_modules" ]; then
-    npm install > /dev/null 2>&1
-fi
-# Start with nohup and redirect to root logs folder
-nohup npm run dev -- --host > ../logs/frontend.log 2>&1 &
-FRONTEND_PID=$!
-echo $FRONTEND_PID > ../frontend.pid
 cd ..
 
 # 4. Final Validation
@@ -57,15 +60,9 @@ sleep 4
 echo -e "------------------------------------------------"
 if ps -p $(cat backend.pid) > /dev/null; then
     echo -e "${GREEN}✔ Backend  : RUNNING (Port 21345)${NC}"
+    echo -e "${GREEN}>>> Access : http://localhost:21345${NC}"
 else
     echo -e "${RED}✘ Backend  : FAILED (Check logs/backend.log)${NC}"
-fi
-
-if ps -p $(cat frontend.pid) > /dev/null; then
-    echo -e "${GREEN}✔ Frontend : RUNNING (Port 5173)${NC}"
-    echo -e "${GREEN}>>> Access : http://localhost:5173${NC}"
-else
-    echo -e "${RED}✘ Frontend : FAILED (Check logs/frontend.log)${NC}"
 fi
 echo -e "------------------------------------------------"
 echo -e "${BLUE}View logs with: tail -f logs/backend.log${NC}"
