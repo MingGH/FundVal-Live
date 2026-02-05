@@ -1,8 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, X, Edit2, Trash2, RefreshCw, ArrowUpDown } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, X, Edit2, Trash2, RefreshCw, ArrowUpDown, ChevronDown } from 'lucide-react';
 import { getAccountPositions, updatePosition, deletePosition } from '../services/api';
 import { getRateColor } from '../components/StatCard';
 import { PortfolioChart } from '../components/PortfolioChart';
+
+const SORT_OPTIONS = [
+  { label: '预估总值（从高到低）', key: 'est_market_value', direction: 'desc' },
+  { label: '预估总值（从低到高）', key: 'est_market_value', direction: 'asc' },
+  { label: '持有收益（从高到低）', key: 'accumulated_income', direction: 'desc' },
+  { label: '持有收益（从低到高）', key: 'accumulated_income', direction: 'asc' },
+  { label: '当日预估（从高到低）', key: 'day_income', direction: 'desc' },
+  { label: '当日预估（从低到高）', key: 'day_income', direction: 'asc' },
+];
 
 const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading }) => {
   const [data, setData] = useState({ summary: {}, positions: [] });
@@ -11,7 +20,14 @@ const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingPos, setEditingPos] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [sortOrder, setSortOrder] = useState(null); // null | 'asc' | 'desc'
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  const [sortOption, setSortOption] = useState(() => {
+    // 从 localStorage 读取上次的排序选项
+    const saved = localStorage.getItem('account_sort_option');
+    return saved ? JSON.parse(saved) : SORT_OPTIONS[0];
+  });
+
+  const sortDropdownRef = useRef(null);
 
   // Form State
   const [formData, setFormData] = useState({ code: '', cost: '', shares: '' });
@@ -42,6 +58,17 @@ const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading 
     // Delay initial fetch to give backend time to start
     const timer = setTimeout(() => fetchData(), 500);
     return () => clearTimeout(timer);
+  }, []);
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target)) {
+        setSortDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const handleOpenModal = (pos = null) => {
@@ -96,26 +123,20 @@ const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading 
     }
   };
 
-  const handleSort = () => {
-    if (sortOrder === null) {
-      setSortOrder('desc'); // 第一次点击：降序
-    } else if (sortOrder === 'desc') {
-      setSortOrder('asc'); // 第二次点击：升序
-    } else {
-      setSortOrder(null); // 第三次点击：取消排序
-    }
+  const handleSortChange = (option) => {
+    setSortOption(option);
+    localStorage.setItem('account_sort_option', JSON.stringify(option));
+    setSortDropdownOpen(false);
   };
 
   const { summary, positions } = data;
 
   // 排序逻辑
-  const sortedPositions = sortOrder
-    ? [...positions].sort((a, b) => {
-        const aValue = a.day_income || 0;
-        const bValue = b.day_income || 0;
-        return sortOrder === 'asc' ? aValue - bValue : bValue - aValue;
-      })
-    : positions;
+  const sortedPositions = [...positions].sort((a, b) => {
+    const aValue = a[sortOption.key] || 0;
+    const bValue = b[sortOption.key] || 0;
+    return sortOption.direction === 'desc' ? bValue - aValue : aValue - bValue;
+  });
 
   return (
     <div className="space-y-6">
@@ -150,6 +171,36 @@ const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading 
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold text-slate-800">持仓明细</h2>
         <div className="flex gap-2">
+            {/* 排序下拉菜单 */}
+            <div className="relative" ref={sortDropdownRef}>
+              <button
+                onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
+                className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-200 px-4 py-2 rounded-lg transition-colors text-sm font-medium"
+              >
+                <ArrowUpDown className="w-4 h-4" />
+                排序
+                <ChevronDown className={`w-3 h-3 transition-transform ${sortDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {sortDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-lg shadow-lg z-50 py-1">
+                  {SORT_OPTIONS.map((option, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleSortChange(option)}
+                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                        sortOption.label === option.label
+                          ? 'bg-blue-50 text-blue-600 font-medium'
+                          : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={handleSync}
               disabled={syncLoading}
@@ -159,7 +210,7 @@ const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading 
               <RefreshCw className={`w-4 h-4 ${syncLoading ? 'animate-spin' : ''}`} />
               {syncLoading ? '同步中...' : '同步关注'}
             </button>
-            <button 
+            <button
               onClick={() => handleOpenModal()}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium"
             >
@@ -179,16 +230,7 @@ const Account = ({ onSelectFund, onPositionChange, onSyncWatchlist, syncLoading 
                 <th className="px-4 py-3 text-right border-b border-slate-100 bg-slate-50">净值 | 估值</th>
                 <th className="px-4 py-3 text-right border-b border-slate-100 bg-slate-50">份额 | 成本</th>
                 <th className="px-4 py-3 text-right border-b border-slate-100 bg-slate-50">持有收益</th>
-                <th className="px-4 py-3 text-right border-b border-slate-100 bg-slate-50">
-                  <button
-                    onClick={handleSort}
-                    className="inline-flex items-center gap-1 hover:text-blue-600 transition-colors"
-                    title={sortOrder === null ? '点击排序' : sortOrder === 'desc' ? '降序' : '升序'}
-                  >
-                    当日预估
-                    <ArrowUpDown className={`w-3 h-3 ${sortOrder ? 'text-blue-600' : ''}`} />
-                  </button>
-                </th>
+                <th className="px-4 py-3 text-right border-b border-slate-100 bg-slate-50">当日预估</th>
                 <th className="px-4 py-3 text-right border-b border-slate-100 bg-slate-50">预估总值</th>
                 <th className="px-4 py-3 text-center border-b border-slate-100 bg-slate-50 rounded-tr-xl">操作</th>
               </tr>
