@@ -12,6 +12,9 @@ import Account from './pages/Account';
 import Settings from './pages/Settings';
 import { SubscribeModal } from './components/SubscribeModal';
 import { searchFunds, getFundDetail, getAccountPositions, subscribeFund } from './services/api';
+import packageJson from '../../package.json';
+
+const APP_VERSION = packageJson.version;
 
 export default function App() {
   // --- State ---
@@ -383,7 +386,7 @@ export default function App() {
             rel="noopener noreferrer"
             className="hover:text-blue-600 transition-colors"
           >
-            v1.0.1
+            v{APP_VERSION}
           </a>
           <span>·</span>
           <a
