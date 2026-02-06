@@ -72,6 +72,10 @@
 3. 首次打开如提示"无法验证开发者"：
    - 打开"系统偏好设置" → "安全性与隐私"
    - 点击"仍要打开"
+4. 如提示"应用已损坏"，在终端执行：
+   ```bash
+   sudo xattr -dr com.apple.quarantine "/Applications/FundVal Live.app"
+   ```
 
 **Windows:**
 1. 下载 `.exe` 文件
