@@ -21,7 +21,7 @@ def init_db():
     """Initialize the database schema."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     # Funds table - simplistic design, exactly what we need
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS funds (
@@ -31,7 +31,7 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # Create an index for searching names, it's cheap and speeds up "LIKE" queries
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_funds_name ON funds(name);
@@ -109,6 +109,20 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_code ON transactions(code);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_confirm_date ON transactions(confirm_date);")
+
+    # Fund history table - cache historical NAV data
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fund_history (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            nav REAL NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (code, date)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fund_history_code ON fund_history(code);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fund_history_date ON fund_history(date);")
+
     conn.commit()
     conn.close()
     logger.info("Database initialized.")
