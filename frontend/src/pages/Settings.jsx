@@ -164,9 +164,71 @@ export default function Settings() {
       <div className="bg-white rounded-lg shadow p-6 space-y-4">
         <h2 className="text-xl font-semibold text-gray-900">AI 配置</h2>
 
+        {/* AI Provider Presets */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            快速配置
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                handleChange('OPENAI_API_BASE', 'https://api.deepseek.com');
+                handleChange('AI_MODEL_NAME', 'deepseek-chat');
+              }}
+              className="px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+            >
+              DeepSeek
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleChange('OPENAI_API_BASE', 'https://api.openai.com/v1');
+                handleChange('AI_MODEL_NAME', 'gpt-4o');
+              }}
+              className="px-3 py-1.5 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+            >
+              OpenAI
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleChange('OPENAI_API_BASE', 'https://dashscope.aliyuncs.com/compatible-mode/v1');
+                handleChange('AI_MODEL_NAME', 'qwen-plus');
+              }}
+              className="px-3 py-1.5 text-sm bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors"
+            >
+              通义千问
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleChange('OPENAI_API_BASE', 'https://api.moonshot.cn/v1');
+                handleChange('AI_MODEL_NAME', 'moonshot-v1-8k');
+              }}
+              className="px-3 py-1.5 text-sm bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors"
+            >
+              Kimi
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleChange('OPENAI_API_BASE', 'https://api.siliconflow.cn/v1');
+                handleChange('AI_MODEL_NAME', 'deepseek-ai/DeepSeek-V3');
+              }}
+              className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              硅基流动
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            点击按钮自动填充 API 地址和模型名，你只需填写 API Key
+          </p>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            OpenAI API Key
+            API Key
           </label>
           <input
             type="password"
@@ -179,7 +241,7 @@ export default function Settings() {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            OpenAI API Base URL
+            API Base URL
           </label>
           <input
             type="text"
@@ -197,14 +259,14 @@ export default function Settings() {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            AI Model Name
+            模型名称
           </label>
           <input
             type="text"
             value={settings.AI_MODEL_NAME}
             onChange={(e) => handleChange('AI_MODEL_NAME', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            placeholder="gpt-4"
+            placeholder="gpt-4o"
           />
         </div>
       </div>
