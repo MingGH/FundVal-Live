@@ -354,7 +354,8 @@ def get_fund_history(code: str, limit: int = 30) -> List[Dict[str, Any]]:
 
     if cache_valid:
         conn.close()
-        return [{"date": row["date"], "nav": float(row["nav"])} for row in rows]
+        # Reverse to ascending order (oldest to newest) for chart display
+        return [{"date": row["date"], "nav": float(row["nav"])} for row in reversed(rows)]
 
     # 2. Cache miss or stale, fetch from API
     try:
