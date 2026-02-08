@@ -35,6 +35,12 @@
 ### AI 深度逻辑报告
 ![AI Analysis](docs/AI分析-持仓股明细.png)
 
+### 自定义 AI 提示词
+![Custom Prompts](docs/自定义提示词.png)
+
+### 数据导入导出
+![Data Import Export](docs/数据导入导出.png)
+
 ---
 
 ## 加入讨论群组

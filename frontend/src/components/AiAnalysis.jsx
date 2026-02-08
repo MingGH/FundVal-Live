@@ -1,20 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bot, Sparkles, AlertTriangle, TrendingUp, TrendingDown, RefreshCcw } from 'lucide-react';
-import { api } from '../services/api';
+import { api, getPrompts } from '../services/api';
 
 export const AiAnalysis = ({ fund }) => {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [prompts, setPrompts] = useState([]);
+  const [selectedPromptId, setSelectedPromptId] = useState(null);
+
+  useEffect(() => {
+    loadPrompts();
+  }, []);
+
+  const loadPrompts = async () => {
+    try {
+      const data = await getPrompts();
+      setPrompts(data);
+      // Set default prompt as selected
+      const defaultPrompt = data.find(p => p.is_default);
+      if (defaultPrompt) {
+        setSelectedPromptId(defaultPrompt.id);
+      }
+    } catch (error) {
+      console.error('Load prompts failed', error);
+    }
+  };
 
   const handleAnalyze = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.post('/ai/analyze_fund', fund);
+      const response = await api.post('/ai/analyze_fund', {
+        fund_info: fund,
+        prompt_id: selectedPromptId
+      });
       setAnalysis(response.data);
     } catch (err) {
-      setError('分析请求失败，请稍后重试');
+      const errorMsg = err.response?.data?.detail || err.message || '分析请求失败，请稍后重试';
+      setError(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -36,7 +60,28 @@ export const AiAnalysis = ({ fund }) => {
           基于 Linus Torvalds 风格的硬核逻辑分析。
           融合历史走势、实时估值、市场舆情，拒绝模棱两可的废话。
         </p>
-        <button 
+
+        {/* Prompt Selector */}
+        {prompts.length > 0 && (
+          <div className="w-full max-w-md mb-4">
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              选择分析风格
+            </label>
+            <select
+              value={selectedPromptId || ''}
+              onChange={(e) => setSelectedPromptId(e.target.value ? parseInt(e.target.value) : null)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+            >
+              {prompts.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.is_default ? '(默认)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <button
           onClick={handleAnalyze}
           className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full font-medium transition-all shadow-lg shadow-indigo-200 flex items-center gap-2"
         >

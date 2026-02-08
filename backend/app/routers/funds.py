@@ -81,16 +81,49 @@ def fund_detail(fund_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/fund/{fund_id}/history")
-def fund_history(fund_id: str, limit: int = 30):
+def fund_history(fund_id: str, limit: int = 30, account_id: int = Query(None)):
     """
     Get historical NAV data for charts.
+    Optionally include transaction markers if account_id is provided.
     """
     try:
-        return get_fund_history(fund_id, limit=limit)
+        history = get_fund_history(fund_id, limit=limit)
+
+        # If account_id is provided, fetch transactions for this fund
+        transactions = []
+        if account_id:
+            from ..db import get_db_connection
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT confirm_date, op_type, confirm_nav, amount_cny, shares_redeemed
+                FROM transactions
+                WHERE code = ? AND account_id = ? AND confirm_nav IS NOT NULL
+                ORDER BY confirm_date ASC
+            """, (fund_id, account_id))
+
+            for row in cursor.fetchall():
+                # Map op_type: "add" -> "buy", "reduce" -> "sell"
+                op_type = row["op_type"]
+                transaction_type = "buy" if op_type == "add" else "sell"
+
+                transactions.append({
+                    "date": row["confirm_date"],
+                    "type": transaction_type,
+                    "nav": float(row["confirm_nav"]),
+                    "amount": float(row["amount_cny"]) if row["amount_cny"] else None,
+                    "shares": float(row["shares_redeemed"]) if row["shares_redeemed"] else None
+                })
+            conn.close()
+
+        return {
+            "history": history,
+            "transactions": transactions
+        }
     except Exception as e:
         # Don't break UI if history fails
         print(f"History error: {e}")
-        return []
+        return {"history": [], "transactions": []}
 
 @router.get("/fund/{fund_id}/intraday")
 def fund_intraday(fund_id: str, date: str = None):

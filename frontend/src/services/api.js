@@ -26,13 +26,17 @@ export const getFundDetail = async (fundId) => {
   }
 };
 
-export const getFundHistory = async (fundId, limit = 30) => {
+export const getFundHistory = async (fundId, limit = 30, accountId = null) => {
     try {
-        const response = await api.get(`/fund/${fundId}/history`, { params: { limit } });
+        const params = { limit };
+        if (accountId) {
+            params.account_id = accountId;
+        }
+        const response = await api.get(`/fund/${fundId}/history`, { params });
         return response.data;
     } catch (error) {
         console.error("Get history failed", error);
-        return [];
+        return { history: [], transactions: [] };
     }
 };
 
@@ -111,4 +115,82 @@ export const getTransactions = async (accountId = 1, code = null, limit = 100) =
 
 export const updatePositionsNav = async (accountId = 1) => {
     return api.post('/account/positions/update-nav', null, { params: { account_id: accountId } });
+};
+
+// AI Prompts management
+export const getPrompts = async () => {
+    try {
+        const response = await api.get('/ai/prompts');
+        return response.data.prompts || [];
+    } catch (error) {
+        console.error("Get prompts failed", error);
+        return [];
+    }
+};
+
+export const createPrompt = async (data) => {
+    return api.post('/ai/prompts', data);
+};
+
+export const updatePrompt = async (id, data) => {
+    return api.put(`/ai/prompts/${id}`, data);
+};
+
+export const deletePrompt = async (id) => {
+    return api.delete(`/ai/prompts/${id}`);
+};
+
+// Data import/export
+export const exportData = async (modules) => {
+    try {
+        const modulesParam = modules.join(',');
+        const response = await api.get(`/data/export?modules=${modulesParam}`, {
+            responseType: 'blob'
+        });
+
+        // Create download link
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+
+        // Extract filename from Content-Disposition header or use default
+        const contentDisposition = response.headers['content-disposition'];
+        let filename = 'fundval_export.json';
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+            if (filenameMatch) {
+                filename = filenameMatch[1];
+            }
+        }
+
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+
+        return { success: true };
+    } catch (error) {
+        console.error('Export failed', error);
+        throw error;
+    }
+};
+
+export const importData = async (data, modules, mode) => {
+    return api.post('/data/import', { data, modules, mode });
+};
+
+// User preferences (watchlist, current account, sort option)
+export const getPreferences = async () => {
+    try {
+        const response = await api.get('/preferences');
+        return response.data;
+    } catch (error) {
+        console.error('Get preferences failed', error);
+        return { watchlist: '[]', currentAccount: 1, sortOption: null };
+    }
+};
+
+export const updatePreferences = async (data) => {
+    return api.post('/preferences', data);
 };

@@ -355,18 +355,33 @@ def get_fund_history(code: str, limit: int = 30) -> List[Dict[str, Any]]:
 
     rows = cursor.fetchall()
 
-    # Check if cache is fresh (less than 24 hours old)
+    # Check if cache is fresh
     cache_valid = False
     if rows:
         latest_update = rows[0]["updated_at"]
+        latest_nav_date = rows[0]["date"]
         # Parse timestamp
         try:
             from datetime import datetime
             update_time = datetime.fromisoformat(latest_update)
             age_hours = (datetime.now() - update_time).total_seconds() / 3600
+
+            # Get today's date
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            current_hour = datetime.now().hour
+
             # For "all history" requests, require more data to consider cache valid
             min_rows = 10 if limit < 9999 else 100
-            cache_valid = age_hours < 24 and len(rows) >= min(limit, min_rows)
+
+            # Cache invalidation logic:
+            # 1. If it's after 16:00 on a trading day and cache doesn't have today's NAV, invalidate
+            # 2. Otherwise, use 24-hour cache
+            if current_hour >= 16 and latest_nav_date < today_str:
+                # After 16:00, if we don't have today's NAV, force refresh
+                cache_valid = False
+            else:
+                # Normal 24-hour cache
+                cache_valid = age_hours < 24 and len(rows) >= min(limit, min_rows)
         except:
             pass
 

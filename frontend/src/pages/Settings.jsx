@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Save, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Save, AlertCircle, CheckCircle2, Plus, Edit2, Trash2, Star, Download, Upload } from 'lucide-react';
+import { getPrompts, createPrompt, updatePrompt, deletePrompt, exportData, importData } from '../services/api';
+import { PromptModal } from '../components/PromptModal';
+import { ExportModal } from '../components/ExportModal';
+import { ImportModal } from '../components/ImportModal';
 
 export default function Settings() {
   const [loading, setLoading] = useState(false);
@@ -20,8 +24,19 @@ export default function Settings() {
 
   const [errors, setErrors] = useState({});
 
+  // AI Prompts state
+  const [prompts, setPrompts] = useState([]);
+  const [promptsLoading, setPromptsLoading] = useState(false);
+  const [promptModalOpen, setPromptModalOpen] = useState(false);
+  const [editingPrompt, setEditingPrompt] = useState(null);
+
+  // Import/Export state
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
   useEffect(() => {
     loadSettings();
+    loadPrompts();
   }, []);
 
   const loadSettings = async () => {
@@ -124,6 +139,99 @@ export default function Settings() {
       setErrors(prev => ({ ...prev, [field]: undefined }));
     }
   };
+
+  // AI Prompts functions
+  const loadPrompts = async () => {
+    setPromptsLoading(true);
+    try {
+      const data = await getPrompts();
+      setPrompts(data);
+    } catch (error) {
+      console.error('Load prompts failed', error);
+    } finally {
+      setPromptsLoading(false);
+    }
+  };
+
+  const handleCreatePrompt = () => {
+    setEditingPrompt(null);
+    setPromptModalOpen(true);
+  };
+
+  const handleEditPrompt = (prompt) => {
+    setEditingPrompt(prompt);
+    setPromptModalOpen(true);
+  };
+
+  const handleSavePrompt = async (data) => {
+    try {
+      if (editingPrompt) {
+        await updatePrompt(editingPrompt.id, data);
+        setMessage({ type: 'success', text: '模板已更新' });
+      } else {
+        await createPrompt(data);
+        setMessage({ type: 'success', text: '模板已创建' });
+      }
+      await loadPrompts();
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleDeletePrompt = async (id) => {
+    if (!confirm('确定要删除这个提示词模板吗？')) return;
+
+    try {
+      await deletePrompt(id);
+      setMessage({ type: 'success', text: '模板已删除' });
+      await loadPrompts();
+    } catch (error) {
+      const errorMsg = error.response?.data?.detail || '删除失败';
+      setMessage({ type: 'error', text: errorMsg });
+    }
+  };
+
+  const handleSetDefault = async (prompt) => {
+    try {
+      // Pass complete prompt data to satisfy backend validation
+      await updatePrompt(prompt.id, {
+        name: prompt.name,
+        system_prompt: prompt.system_prompt,
+        user_prompt: prompt.user_prompt,
+        is_default: true
+      });
+      setMessage({ type: 'success', text: '已设为默认模板' });
+      await loadPrompts();
+    } catch (error) {
+      setMessage({ type: 'error', text: '设置失败' });
+    }
+  };
+
+  const handleImportSuccess = () => {
+    setMessage({ type: 'success', text: '数据导入成功' });
+    // 重新加载数据
+    loadSettings();
+    loadPrompts();
+  };
+
+  const handleExport = async (modules) => {
+    try {
+      await exportData(modules);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleImport = async (data, modules, mode) => {
+    try {
+      const response = await importData(data, modules, mode);
+      handleImportSuccess();
+      return response;
+    } catch (error) {
+      throw error;
+    }
+  };
+
 
   if (loading) {
     return (
@@ -385,6 +493,134 @@ export default function Settings() {
           </p>
         </div>
       </div>
+
+      {/* AI Prompts Management */}
+      <div className="bg-white rounded-lg shadow p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-gray-900">AI 提示词管理</h2>
+          <button
+            onClick={handleCreatePrompt}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            新建模板
+          </button>
+        </div>
+
+        {promptsLoading ? (
+          <div className="text-center py-8 text-gray-500">加载中...</div>
+        ) : prompts.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">暂无提示词模板</div>
+        ) : (
+          <div className="grid gap-4">
+            {prompts.map(prompt => (
+              <div
+                key={prompt.id}
+                className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="font-semibold text-gray-900">{prompt.name}</h3>
+                      {prompt.is_default && (
+                        <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full flex items-center gap-1">
+                          <Star className="w-3 h-3 fill-current" />
+                          默认
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-500">
+                      创建于 {new Date(prompt.created_at).toLocaleString('zh-CN')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!prompt.is_default && (
+                      <button
+                        onClick={() => handleSetDefault(prompt)}
+                        className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                        title="设为默认"
+                      >
+                        <Star className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleEditPrompt(prompt)}
+                      className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                      title="编辑"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeletePrompt(prompt.id)}
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                      title="删除"
+                      disabled={prompt.is_default}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Data Import/Export */}
+      <div className="bg-white rounded-lg shadow p-6 space-y-4">
+        <h2 className="text-xl font-semibold text-gray-900">数据导入导出</h2>
+
+        <div className="grid grid-cols-2 gap-4">
+          <button
+            onClick={() => setExportModalOpen(true)}
+            className="flex items-center justify-center gap-2 px-6 py-4 border-2 border-blue-200 text-blue-700 rounded-lg hover:bg-blue-50 transition-colors"
+          >
+            <Download className="w-5 h-5" />
+            <span className="font-medium">导出数据</span>
+          </button>
+
+          <button
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center justify-center gap-2 px-6 py-4 border-2 border-green-200 text-green-700 rounded-lg hover:bg-green-50 transition-colors"
+          >
+            <Upload className="w-5 h-5" />
+            <span className="font-medium">导入数据</span>
+          </button>
+        </div>
+
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <p className="text-sm text-yellow-800">
+            <strong>提示：</strong>
+          </p>
+          <ul className="text-sm text-yellow-700 mt-2 space-y-1 list-disc list-inside">
+            <li>导出时，敏感信息（API Key、密码）将被掩码处理</li>
+            <li>导入时，可选择合并模式（保留现有数据）或替换模式（删除现有数据）</li>
+            <li>替换模式需要二次确认，请谨慎操作</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Prompt Modal */}
+      <PromptModal
+        isOpen={promptModalOpen}
+        onClose={() => setPromptModalOpen(false)}
+        onSave={handleSavePrompt}
+        prompt={editingPrompt}
+      />
+
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onExport={handleExport}
+      />
+
+      {/* Import Modal */}
+      <ImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImport={handleImport}
+      />
     </div>
   );
 }

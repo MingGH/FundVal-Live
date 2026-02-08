@@ -11,31 +11,100 @@ const RANGES = [
   { label: '成立来', val: 9999 },
 ];
 
-export const HistoryChart = ({ fundId }) => {
+export const HistoryChart = ({ fundId, accountId = null }) => {
   const [data, setData] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState(22); // Default 1M
 
   useEffect(() => {
     if (!fundId) return;
-    
+
     const fetchHistory = async () => {
       setLoading(true);
       try {
-        const history = await getFundHistory(fundId, range);
-        setData(history);
+        const result = await getFundHistory(fundId, range, accountId);
+        // Handle both old format (array) and new format (object)
+        if (Array.isArray(result)) {
+          setData(result);
+          setTransactions([]);
+        } else {
+          setData(result.history || []);
+          setTransactions(result.transactions || []);
+        }
       } catch (e) {
         console.error("Failed to load history", e);
       } finally {
         setLoading(false);
       }
     };
-    
+
     fetchHistory();
-  }, [fundId, range]);
+  }, [fundId, range, accountId]);
 
   if (loading) return <div className="h-64 flex items-center justify-center text-slate-400">加载走势中...</div>;
   if (!data || data.length === 0) return <div className="h-64 flex items-center justify-center text-slate-400">暂无历史数据</div>;
+
+  // Ensure we have valid data before rendering chart
+  const validData = data.filter(d => d && d.date && d.nav !== null && d.nav !== undefined);
+  if (validData.length === 0) return <div className="h-64 flex items-center justify-center text-slate-400">暂无有效数据</div>;
+
+  // Custom dot component for transaction markers
+  const TransactionDot = (props) => {
+    const { cx, cy, payload } = props;
+    const transaction = transactions.find(t => t.date === payload.date);
+
+    if (!transaction) return null;
+
+    const isBuy = transaction.type === 'buy';
+    const color = isBuy ? '#ef4444' : '#10b981'; // red for buy, green for sell
+    const label = isBuy ? 'B' : 'S';
+
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={12} fill={color} stroke="white" strokeWidth={2} />
+        <text
+          x={cx}
+          y={cy}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill="white"
+          fontSize={10}
+          fontWeight="bold"
+        >
+          {label}
+        </text>
+      </g>
+    );
+  };
+
+  // Custom tooltip to show transaction info
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload || !payload.length) return null;
+
+    const point = payload[0].payload;
+    const transaction = transactions.find(t => t.date === point.date);
+
+    return (
+      <div className="bg-white p-3 rounded-lg shadow-lg border border-slate-200">
+        <p className="text-xs text-slate-500 mb-1">{point.date}</p>
+        <p className="text-sm font-bold text-slate-800">净值: {point.nav?.toFixed(4)}</p>
+        {transaction && (
+          <div className={`mt-2 pt-2 border-t ${transaction.type === 'buy' ? 'border-red-200' : 'border-green-200'}`}>
+            <p className={`text-xs font-bold ${transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'}`}>
+              {transaction.type === 'buy' ? '买入' : '卖出'}
+            </p>
+            {transaction.amount && (
+              <p className="text-xs text-slate-600">金额: ¥{transaction.amount.toFixed(2)}</p>
+            )}
+            {transaction.shares && (
+              <p className="text-xs text-slate-600">份额: {transaction.shares.toFixed(2)}</p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="w-full">
@@ -45,8 +114,8 @@ export const HistoryChart = ({ fundId }) => {
             key={r.label}
             onClick={() => setRange(r.val)}
             className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-colors ${
-              range === r.val 
-                ? 'bg-blue-600 text-white font-medium' 
+              range === r.val
+                ? 'bg-blue-600 text-white font-medium'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
@@ -54,11 +123,24 @@ export const HistoryChart = ({ fundId }) => {
           </button>
         ))}
       </div>
-      
-      <div className="h-64 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+
+      {transactions.length > 0 && (
+        <div className="mb-2 flex items-center gap-4 text-xs text-slate-500">
+          <div className="flex items-center gap-1">
+            <div className="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center text-white font-bold text-[8px]">B</div>
+            <span>买入</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-[8px]">S</div>
+            <span>卖出</span>
+          </div>
+        </div>
+      )}
+
+      <div className="h-64 w-full min-h-[256px]">
+        <ResponsiveContainer width="100%" height="100%" minHeight={256}>
           <AreaChart
-            data={data}
+            data={validData}
             margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
           >
             <defs>
@@ -68,34 +150,31 @@ export const HistoryChart = ({ fundId }) => {
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-            <XAxis 
-              dataKey="date" 
-              tick={{fontSize: 10, fill: '#94a3b8'}} 
+            <XAxis
+              dataKey="date"
+              tick={{fontSize: 10, fill: '#94a3b8'}}
               tickLine={false}
               axisLine={false}
               tickFormatter={(str) => str.slice(5)} // Show MM-DD
               minTickGap={30}
             />
-            <YAxis 
-              domain={['auto', 'auto']} 
-              tick={{fontSize: 10, fill: '#94a3b8'}} 
+            <YAxis
+              domain={['auto', 'auto']}
+              tick={{fontSize: 10, fill: '#94a3b8'}}
               tickLine={false}
               axisLine={false}
               width={40}
             />
-            <Tooltip 
-              contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-              itemStyle={{ color: '#1e293b', fontSize: '12px', fontWeight: 'bold' }}
-              labelStyle={{ color: '#64748b', fontSize: '10px', marginBottom: '4px' }}
-            />
-            <Area 
-              type="monotone" 
-              dataKey="nav" 
-              stroke="#3b82f6" 
+            <Tooltip content={<CustomTooltip />} />
+            <Area
+              type="monotone"
+              dataKey="nav"
+              stroke="#3b82f6"
               strokeWidth={2}
-              fillOpacity={1} 
-              fill="url(#colorNav)" 
+              fillOpacity={1}
+              fill="url(#colorNav)"
               animationDuration={500}
+              dot={<TransactionDot />}
             />
           </AreaChart>
         </ResponsiveContainer>

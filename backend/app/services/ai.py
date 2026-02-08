@@ -11,12 +11,44 @@ from langchain_core.output_parsers import StrOutputParser
 from ..config import Config
 from .prompts import LINUS_FINANCIAL_ANALYSIS_PROMPT
 from .fund import get_fund_history, _calculate_technical_indicators
+from ..db import get_db_connection
 
 
 class AIService:
     def __init__(self):
         # 不在初始化时创建 LLM，而是每次调用时动态创建
         pass
+
+    def _get_prompt_template(self, prompt_id: Optional[int] = None):
+        """
+        Get prompt template from database.
+        If prompt_id is None, use the default template.
+        """
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        if prompt_id:
+            cursor.execute("""
+                SELECT system_prompt, user_prompt FROM ai_prompts WHERE id = ?
+            """, (prompt_id,))
+        else:
+            cursor.execute("""
+                SELECT system_prompt, user_prompt FROM ai_prompts WHERE is_default = 1 LIMIT 1
+            """)
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            # Fallback to hardcoded prompt
+            return LINUS_FINANCIAL_ANALYSIS_PROMPT
+
+        # Build ChatPromptTemplate from database
+        from langchain_core.prompts import ChatPromptTemplate
+        return ChatPromptTemplate.from_messages([
+            ("system", row["system_prompt"]),
+            ("user", row["user_prompt"])
+        ])
 
     def _init_llm(self, fast_mode=True):
         # 每次调用时重新读取配置，支持热重载
@@ -85,7 +117,7 @@ class AIService:
             "desc": f"近30日最高{max_nav:.4f}, 最低{min_nav:.4f}, 现价处于{'高位' if position>0.8 else '低位' if position<0.2 else '中位'}区间 ({int(position*100)}%)"
         }
 
-    async def analyze_fund(self, fund_info: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze_fund(self, fund_info: Dict[str, Any], prompt_id: Optional[int] = None) -> Dict[str, Any]:
         # 每次调用时重新初始化 LLM，支持配置热重载
         llm = self._init_llm()
 
@@ -127,7 +159,7 @@ class AIService:
                 sharpe_diff = abs(expected_sharpe - sharpe_val)
 
                 if sharpe_diff > 0.3:
-                    consistency_note = f"\n 数据一致性警告：夏普比率 {sharpe_val} 与计算值 {expected_sharpe:.2f} 偏差 {sharpe_diff:.2f}，可能存在数据异常。"
+                    consistency_note = f"\n⚠️ 数据一致性警告：夏普比率 {sharpe_val} 与计算值 {expected_sharpe:.2f} 偏差 {sharpe_diff:.2f}，可能存在数据异常。"
                 else:
                     consistency_note = f"\n✓ 数据自洽性验证通过：夏普比率与年化回报/波动率数学一致（偏差 {sharpe_diff:.2f}）。"
         except:
@@ -138,30 +170,41 @@ class AIService:
             recent_history = history[:30]
             history_summary = f"近30日走势: 起始{recent_history[0]['nav']} -> 结束{recent_history[-1]['nav']}. {indicators['desc']}"
 
-        # Prepare Fund Info Summary (Exclude detailed holdings to focus AI on Fund level)
-        fund_summary = {
-            "id": fund_id,
-            "name": fund_name,
-            "type": fund_info.get("type"),
-            "manager": fund_info.get("manager"),
-            "latest_nav": fund_info.get("nav"),
-            "update_time": fund_info.get("time")
+        # Prepare variables for template replacement
+        holdings_str = ""
+        if fund_info.get("holdings"):
+            holdings_str = "\n".join([
+                f"- {h['name']}: {h['percent']}% (涨跌: {h['change']:+.2f}%)"
+                for h in fund_info["holdings"][:10]
+            ])
+
+        variables = {
+            "fund_code": fund_id,
+            "fund_name": fund_name,
+            "fund_type": fund_info.get("type", "未知"),
+            "manager": fund_info.get("manager", "未知"),
+            "nav": fund_info.get("nav", "--"),
+            "estimate": fund_info.get("estimate", "--"),
+            "est_rate": fund_info.get("estRate", 0),
+            "sharpe": technical_indicators.get("sharpe", "--"),
+            "volatility": technical_indicators.get("volatility", "--"),
+            "max_drawdown": technical_indicators.get("max_drawdown", "--"),
+            "annual_return": technical_indicators.get("annual_return", "--"),
+            "concentration": fund_info.get("indicators", {}).get("concentration", "--"),
+            "holdings": holdings_str or "暂无持仓数据",
+            "history_summary": history_summary
         }
 
-        # Append consistency note to technical indicators
-        technical_indicators_with_note = str(technical_indicators) + consistency_note
+        # 2. Get prompt template and replace variables
+        prompt_template = self._get_prompt_template(prompt_id)
 
-        # 2. Invoke LLM with Linus Prompt
-        chain = LINUS_FINANCIAL_ANALYSIS_PROMPT | llm | StrOutputParser()
+        # 3. Invoke LLM
+        chain = prompt_template | llm | StrOutputParser()
 
         try:
-            raw_result = await chain.ainvoke({
-                "fund_info": str(fund_summary),
-                "history_summary": history_summary,
-                "technical_indicators": technical_indicators_with_note
-            })
+            raw_result = await chain.ainvoke(variables)
 
-            # 3. Parse Result
+            # 4. Parse Result
             clean_json = raw_result.strip()
             if "```json" in clean_json:
                 clean_json = clean_json.split("```json")[1].split("```")[0]

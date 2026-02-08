@@ -7,7 +7,7 @@ import { HistoryChart } from '../components/HistoryChart';
 import { IntradayChart } from '../components/IntradayChart';
 import { IndicatorsCard } from '../components/IndicatorsCard';
 
-export const FundDetail = ({ fund, onSubscribe }) => {
+export const FundDetail = ({ fund, onSubscribe, accountId }) => {
   const [chartType, setChartType] = useState('history'); // 'history' | 'intraday'
 
   if (!fund) return null;
@@ -75,7 +75,7 @@ export const FundDetail = ({ fund, onSubscribe }) => {
           </div>
 
           {chartType === 'history' ? (
-            <HistoryChart fundId={fund.id} />
+            <HistoryChart fundId={fund.id} accountId={accountId} />
           ) : (
             <IntradayChart fundId={fund.id} />
           )}

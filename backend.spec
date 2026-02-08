@@ -36,6 +36,8 @@ a = Analysis(
         ('frontend/dist', 'fundval-live'),
     ] + datas_list,
     hiddenimports=[
+        'tkinter',
+        'tkinter.messagebox',
         'uvicorn.logging',
         'uvicorn.loops',
         'uvicorn.loops.auto',
