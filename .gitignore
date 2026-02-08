@@ -28,10 +28,12 @@ __pycache__
 .venv
 .env
 backend/data/fund.db
+backend/data/.encryption_key
 *.pid
 # Electron build
 release/
 build/
+temp/
 
 # PyInstaller
 *.spec.backup
