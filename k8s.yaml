@@ -90,3 +90,13 @@ spec:
                 name: fundval-service
                 port:
                   number: 80
+    - host: demo-fundval.onetool.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fundval-service
+                port:
+                  number: 80
