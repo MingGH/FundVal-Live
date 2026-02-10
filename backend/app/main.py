@@ -145,9 +145,9 @@ async def get_project_info():
         "name": "FundVal Live",
         "version": APP_VERSION,
         "description": "盘中基金实时估值与逻辑审计系统",
-        "github": "https://github.com/Ye-Yu-Mo/FundVal-Live",
-        "issues": "https://github.com/Ye-Yu-Mo/FundVal-Live/issues",
-        "releases": "https://github.com/Ye-Yu-Mo/FundVal-Live/releases"
+        "github": "https://github.com/MingGH/FundVal-Live",
+        "issues": "https://github.com/MingGH/FundVal-Live/issues",
+        "releases": "https://github.com/MingGH/FundVal-Live/releases"
     }
 
 # 静态文件服务（前端）

@@ -229,7 +229,7 @@ jobs:
             ## 开源协议
 
             本项目采用 AGPL-3.0 协议开源。如果你使用本项目代码提供网络服务，必须开源你的修改。
-            详见：https://github.com/Ye-Yu-Mo/FundVal-Live/blob/main/LICENSE
+            详见：https://github.com/MingGH/FundVal-Live/blob/main/LICENSE
           files: |
             macos-build/*
             windows-build/*

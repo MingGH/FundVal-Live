@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # FundVal Live - Development Mode Startup Script
-# For desktop app users: Download from https://github.com/Ye-Yu-Mo/FundVal-Live/releases
+# For desktop app users: Download from https://github.com/MingGH/FundVal-Live/releases
 
 # Colors
 GREEN='\033[0;32m'

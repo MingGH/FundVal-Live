@@ -27,18 +27,7 @@ export default function App() {
   const [user, setUser] = useState(getStoredUser());
   const [authed, setAuthed] = useState(isLoggedIn());
 
-  useEffect(() => {
-    const onLogout = () => { setAuthed(false); setUser(null); };
-    window.addEventListener('auth:logout', onLogout);
-    return () => window.removeEventListener('auth:logout', onLogout);
-  }, []);
-
-  const handleLogin = (u) => { setUser(u); setAuthed(true); };
-  const handleLogout = () => { apiLogout(); setAuthed(false); setUser(null); };
-
-  if (!authed) return <LoginPage onLogin={handleLogin} />;
-
-  // --- State ---
+  // --- State (must be declared before any conditional return to satisfy React Hooks rules) ---
   const [currentView, setCurrentView] = useState('list'); // 'list' | 'detail' | 'account' | 'settings' | 'admin'
   const [currentAccount, setCurrentAccount] = useState(1);
   const [accounts, setAccounts] = useState([]);
@@ -52,6 +41,13 @@ export default function App() {
   const [selectedFund, setSelectedFund] = useState(null);
   const [detailFundId, setDetailFundId] = useState(null);
   const [accountCodes, setAccountCodes] = useState(new Set());
+  const [syncLoading, setSyncLoading] = useState(false);
+
+  useEffect(() => {
+    const onLogout = () => { setAuthed(false); setUser(null); };
+    window.addEventListener('auth:logout', onLogout);
+    return () => window.removeEventListener('auth:logout', onLogout);
+  }, []);
 
   // Load preferences from backend on mount
   useEffect(() => {
@@ -224,6 +220,11 @@ export default function App() {
     return () => clearInterval(interval);
   }, [watchlist]); 
 
+  // --- Auth handlers & guard ---
+  const handleLogin = (u) => { setUser(u); setAuthed(true); };
+  const handleLogout = () => { apiLogout(); setAuthed(false); setUser(null); };
+
+  if (!authed) return <LoginPage onLogin={handleLogin} />;
 
   // --- Handlers ---
 
@@ -306,8 +307,6 @@ export default function App() {
         alert('订阅设置保存失败，请检查网络或后端配置');
     }
   };
-
-  const [syncLoading, setSyncLoading] = useState(false);
 
   const handleSyncWatchlist = async (positions) => {
       if (!positions || positions.length === 0) return;
@@ -465,7 +464,7 @@ export default function App() {
                 API 正常
               </span>
               <a
-                href="https://github.com/Ye-Yu-Mo/FundVal-Live"
+                href="https://github.com/MingGH/FundVal-Live"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 hover:text-blue-600 transition-colors"
@@ -539,7 +538,7 @@ export default function App() {
         </p>
         <div className="flex items-center justify-center gap-4 text-slate-500">
           <a
-            href="https://github.com/Ye-Yu-Mo/FundVal-Live"
+            href="https://github.com/MingGH/FundVal-Live"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-blue-600 transition-colors flex items-center gap-1"
@@ -551,7 +550,7 @@ export default function App() {
           </a>
           <span>·</span>
           <a
-            href="https://github.com/Ye-Yu-Mo/FundVal-Live/releases"
+            href="https://github.com/MingGH/FundVal-Live/releases"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-blue-600 transition-colors"
@@ -560,7 +559,7 @@ export default function App() {
           </a>
           <span>·</span>
           <a
-            href="https://github.com/Ye-Yu-Mo/FundVal-Live/blob/main/LICENSE"
+            href="https://github.com/MingGH/FundVal-Live/blob/main/LICENSE"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-blue-600 transition-colors"
@@ -569,7 +568,7 @@ export default function App() {
           </a>
           <span>·</span>
           <a
-            href="https://github.com/Ye-Yu-Mo/FundVal-Live/issues"
+            href="https://github.com/MingGH/FundVal-Live/issues"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:text-blue-600 transition-colors"

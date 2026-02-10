@@ -5,10 +5,10 @@
   "main": "electron/main.js",
   "author": "Jasmine",
   "license": "AGPL-3.0",
-  "homepage": "https://github.com/Ye-Yu-Mo/FundVal-Live",
+  "homepage": "https://github.com/MingGH/FundVal-Live",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Ye-Yu-Mo/FundVal-Live.git"
+    "url": "https://github.com/MingGH/FundVal-Live.git"
   },
   "scripts": {
     "electron": "electron .",
