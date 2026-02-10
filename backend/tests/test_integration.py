@@ -270,3 +270,81 @@ class TestChangePassword:
 
         r = req("post", "/api/auth/change-password", json={"old_password": "wrong", "new_password": "new"}, headers=auth(token))
         assert r.status_code == 400
+
+
+# ── User Settings (per-user multi-tenant) ──
+
+class TestUserSettings:
+    @classmethod
+    def setup_class(cls):
+        req("post", "/api/admin/users", json={"username": "settings_a", "password": "aaa"}, headers=auth(ADMIN_TOKEN))
+        r = req("post", "/api/auth/login", json={"username": "settings_a", "password": "aaa"})
+        cls.token_a = r.json()["token"]
+
+        req("post", "/api/admin/users", json={"username": "settings_b", "password": "bbb"}, headers=auth(ADMIN_TOKEN))
+        r = req("post", "/api/auth/login", json={"username": "settings_b", "password": "bbb"})
+        cls.token_b = r.json()["token"]
+
+    def test_requires_auth(self):
+        assert req("get", "/api/user/settings").status_code == 401
+        assert req("post", "/api/user/settings", json={"settings": {}}).status_code == 401
+
+    def test_get_empty_settings(self):
+        r = req("get", "/api/user/settings", headers=auth(self.token_a))
+        assert r.status_code == 200
+        assert r.json()["settings"] == {}
+
+    def test_save_and_read_settings(self):
+        r = req("post", "/api/user/settings", json={"settings": {
+            "OPENAI_API_BASE": "https://api.test.com/v1",
+            "AI_MODEL_NAME": "gpt-test",
+        }}, headers=auth(self.token_a))
+        assert r.status_code == 200
+
+        r = req("get", "/api/user/settings", headers=auth(self.token_a))
+        s = r.json()["settings"]
+        assert s["OPENAI_API_BASE"] == "https://api.test.com/v1"
+        assert s["AI_MODEL_NAME"] == "gpt-test"
+
+    def test_encrypted_fields_masked(self):
+        r = req("post", "/api/user/settings", json={"settings": {
+            "OPENAI_API_KEY": "sk-test-secret-key",
+        }}, headers=auth(self.token_a))
+        assert r.status_code == 200
+
+        r = req("get", "/api/user/settings", headers=auth(self.token_a))
+        assert r.json()["settings"]["OPENAI_API_KEY"] == "***"
+
+    def test_settings_isolated_between_users(self):
+        req("post", "/api/user/settings", json={"settings": {
+            "OPENAI_API_BASE": "https://user-a-only.com",
+        }}, headers=auth(self.token_a))
+
+        r = req("get", "/api/user/settings", headers=auth(self.token_b))
+        assert "OPENAI_API_BASE" not in r.json()["settings"]
+
+    def test_non_configurable_keys_ignored(self):
+        r = req("post", "/api/user/settings", json={"settings": {
+            "INTRADAY_COLLECT_INTERVAL": "999",
+            "AI_MODEL_NAME": "valid-model",
+        }}, headers=auth(self.token_a))
+        assert r.status_code == 200
+
+        r = req("get", "/api/user/settings", headers=auth(self.token_a))
+        assert "INTRADAY_COLLECT_INTERVAL" not in r.json()["settings"]
+        assert r.json()["settings"]["AI_MODEL_NAME"] == "valid-model"
+
+    def test_star_mask_not_overwritten(self):
+        """Sending *** should not overwrite the stored value."""
+        req("post", "/api/user/settings", json={"settings": {
+            "OPENAI_API_KEY": "sk-real-key",
+        }}, headers=auth(self.token_b))
+
+        # Send *** back (like the frontend would)
+        req("post", "/api/user/settings", json={"settings": {
+            "OPENAI_API_KEY": "***",
+        }}, headers=auth(self.token_b))
+
+        r = req("get", "/api/user/settings", headers=auth(self.token_b))
+        # Should still be masked (not empty)
+        assert r.json()["settings"]["OPENAI_API_KEY"] == "***"

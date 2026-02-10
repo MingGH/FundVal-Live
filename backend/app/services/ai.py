@@ -44,10 +44,17 @@ class AIService:
         from langchain_core.prompts import ChatPromptTemplate
         return ChatPromptTemplate.from_messages([("system", row["system_prompt"]), ("user", row["user_prompt"])])
 
-    def _init_llm(self, fast_mode=True):
-        api_base = Config.OPENAI_API_BASE
-        api_key = Config.OPENAI_API_KEY
-        model = Config.AI_MODEL_NAME
+    def _init_llm(self, fast_mode=True, user_id=None):
+        if user_id:
+            from ..routers.settings import get_user_effective_settings
+            settings = get_user_effective_settings(user_id)
+            api_base = settings.get("OPENAI_API_BASE", "")
+            api_key = settings.get("OPENAI_API_KEY", "")
+            model = settings.get("AI_MODEL_NAME", "")
+        else:
+            api_base = Config.OPENAI_API_BASE
+            api_key = Config.OPENAI_API_KEY
+            model = Config.AI_MODEL_NAME
 
         if not api_key:
             return None
@@ -94,7 +101,7 @@ class AIService:
         }
 
     async def analyze_fund(self, fund_info: Dict[str, Any], prompt_id: Optional[int] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
-        llm = self._init_llm()
+        llm = self._init_llm(user_id=user_id)
 
         if not llm:
             return {

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Save, AlertCircle, CheckCircle2, Plus, Edit2, Trash2, Star, Download, Upload } from 'lucide-react';
-import { getPrompts, createPrompt, updatePrompt, deletePrompt, exportData, importData } from '../services/api';
+import { getPrompts, createPrompt, updatePrompt, deletePrompt, exportData, importData, getStoredUser } from '../services/api';
 import { PromptModal } from '../components/PromptModal';
 import { ExportModal } from '../components/ExportModal';
 import { ImportModal } from '../components/ImportModal';
 
 export default function Settings() {
+  const currentUser = getStoredUser();
+  const isAdmin = currentUser?.role === 'admin';
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -42,11 +44,12 @@ export default function Settings() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/settings');
+      const endpoint = isAdmin ? '/api/settings' : '/api/user/settings';
+      const token = localStorage.getItem('token');
+      const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) throw new Error('Failed to load settings');
       const data = await response.json();
-
-      setSettings(data.settings || {});
+      setSettings(prev => ({ ...prev, ...data.settings }));
     } catch (error) {
       setMessage({ type: 'error', text: error.message });
     } finally {
@@ -106,9 +109,11 @@ export default function Settings() {
         Object.entries(settings).filter(([key, value]) => value !== '***')
       );
 
-      const response = await fetch('/api/settings', {
+      const endpoint = isAdmin ? '/api/settings' : '/api/user/settings';
+      const token = localStorage.getItem('token');
+      const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ settings: filteredSettings })
       });
 
@@ -270,7 +275,22 @@ export default function Settings() {
 
       {/* AI Configuration */}
       <div className="bg-white rounded-lg shadow p-6 space-y-4">
-        <h2 className="text-xl font-semibold text-gray-900">AI 配置</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-gray-900">AI 配置</h2>
+          <span className={`px-2 py-1 text-xs rounded-full ${isAdmin ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+            {isAdmin ? '全局设置（所有用户生效）' : '个人设置'}
+          </span>
+        </div>
+
+        {!isAdmin && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <p className="text-sm text-blue-800">
+              🔒 你的 API Key 经加密存储，管理员无法查看明文。如有疑虑，欢迎检查
+              <a href="https://github.com/MingGH/FundVal-Live" target="_blank" rel="noopener noreferrer" className="underline ml-1">源代码</a>。
+              未配置时将使用系统默认配置（如有）。
+            </p>
+          </div>
+        )}
 
         {/* AI Provider Presets */}
         <div>
@@ -381,7 +401,12 @@ export default function Settings() {
 
       {/* Email Configuration */}
       <div className="bg-white rounded-lg shadow p-6 space-y-4">
-        <h2 className="text-xl font-semibold text-gray-900">邮件配置</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-gray-900">邮件配置</h2>
+          <span className={`px-2 py-1 text-xs rounded-full ${isAdmin ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+            {isAdmin ? '全局设置' : '个人设置'}
+          </span>
+        </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -466,7 +491,8 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Data Collection Configuration */}
+      {/* Data Collection Configuration (admin only) */}
+      {isAdmin && (
       <div className="bg-white rounded-lg shadow p-6 space-y-4">
         <h2 className="text-xl font-semibold text-gray-900">数据采集配置</h2>
 
@@ -493,6 +519,7 @@ export default function Settings() {
           </p>
         </div>
       </div>
+      )}
 
       {/* AI Prompts Management */}
       <div className="bg-white rounded-lg shadow p-6 space-y-4">

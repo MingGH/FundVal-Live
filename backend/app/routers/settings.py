@@ -10,6 +10,62 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 ENCRYPTED_FIELDS = {"OPENAI_API_KEY", "SMTP_PASSWORD"}
+USER_CONFIGURABLE_KEYS = {"OPENAI_API_KEY", "OPENAI_API_BASE", "AI_MODEL_NAME", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"}
+
+
+def get_user_effective_settings(user_id: int) -> dict:
+    """Get effective settings for a user: user-level > global > default.
+    Returns decrypted values for service use."""
+    conn = get_db_connection()
+    try:
+        cur = dict_cursor(conn)
+        # Load user-level settings (decrypted with per-user key)
+        cur.execute("SELECT `key`, value FROM user_preferences WHERE user_id = %s AND `key` LIKE 'setting_%%'", (user_id,))
+        user_settings = {}
+        for row in cur.fetchall():
+            real_key = row["key"][len("setting_"):]
+            value = row["value"]
+            if real_key in ENCRYPTED_FIELDS and value:
+                value = decrypt_value(value, user_id=user_id)
+            user_settings[real_key] = value
+
+        # If user has API key configured, use all their settings
+        if user_settings.get("OPENAI_API_KEY"):
+            result = {
+                "OPENAI_API_KEY": user_settings.get("OPENAI_API_KEY", ""),
+                "OPENAI_API_BASE": user_settings.get("OPENAI_API_BASE") or Config.OPENAI_API_BASE,
+                "AI_MODEL_NAME": user_settings.get("AI_MODEL_NAME") or Config.AI_MODEL_NAME,
+            }
+        else:
+            Config._ensure_loaded()
+            result = {
+                "OPENAI_API_KEY": Config.OPENAI_API_KEY,
+                "OPENAI_API_BASE": Config.OPENAI_API_BASE,
+                "AI_MODEL_NAME": Config.AI_MODEL_NAME,
+            }
+
+        # SMTP: user-level > global
+        if user_settings.get("SMTP_USER"):
+            result.update({
+                "SMTP_HOST": user_settings.get("SMTP_HOST") or Config.SMTP_HOST,
+                "SMTP_PORT": int(user_settings.get("SMTP_PORT") or Config.SMTP_PORT),
+                "SMTP_USER": user_settings.get("SMTP_USER", ""),
+                "SMTP_PASSWORD": user_settings.get("SMTP_PASSWORD", ""),
+                "EMAIL_FROM": user_settings.get("EMAIL_FROM") or Config.EMAIL_FROM,
+            })
+        else:
+            Config._ensure_loaded()
+            result.update({
+                "SMTP_HOST": Config.SMTP_HOST,
+                "SMTP_PORT": Config.SMTP_PORT,
+                "SMTP_USER": Config.SMTP_USER,
+                "SMTP_PASSWORD": Config.SMTP_PASSWORD,
+                "EMAIL_FROM": Config.EMAIL_FROM,
+            })
+
+        return result
+    finally:
+        release_db_connection(conn)
 
 def validate_email(email: str) -> bool:
     return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
@@ -91,6 +147,58 @@ def update_settings(data: dict = Body(...), admin: dict = Depends(require_admin)
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to update settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        release_db_connection(conn)
+
+# ── User-level settings (per-user AI/SMTP config) ──
+
+@router.get("/user/settings")
+def get_user_settings(user: dict = Depends(get_current_user)):
+    conn = get_db_connection()
+    try:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT `key`, value FROM user_preferences WHERE user_id = %s AND `key` LIKE 'setting_%%'", (user["user_id"],))
+        settings = {}
+        for row in cur.fetchall():
+            real_key = row["key"][len("setting_"):]
+            value = row["value"]
+            if real_key in ENCRYPTED_FIELDS and value:
+                value = decrypt_value(value, user_id=user["user_id"])
+                settings[real_key] = "***" if value else ""
+            else:
+                settings[real_key] = value
+        return {"settings": settings}
+    except Exception as e:
+        logger.error(f"Failed to get user settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        release_db_connection(conn)
+
+@router.post("/user/settings")
+def update_user_settings(data: dict = Body(...), user: dict = Depends(get_current_user)):
+    conn = get_db_connection()
+    try:
+        settings = data.get("settings", {})
+        cur = dict_cursor(conn)
+        for key, value in settings.items():
+            if key not in USER_CONFIGURABLE_KEYS:
+                continue
+            if value == "***":
+                continue
+            db_key = f"setting_{key}"
+            if key in ENCRYPTED_FIELDS and value:
+                value = encrypt_value(value, user_id=user["user_id"])
+            cur.execute("""
+                INSERT INTO user_preferences (user_id, `key`, value, updated_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = CURRENT_TIMESTAMP
+            """, (user["user_id"], db_key, value))
+        conn.commit()
+        return {"message": "个人设置已保存"}
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to update user settings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         release_db_connection(conn)

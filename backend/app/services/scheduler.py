@@ -7,9 +7,10 @@ import pandas as pd
 from ..db import get_db_connection, release_db_connection, dict_cursor
 from ..config import Config
 from ..services.fund import get_combined_valuation
-from ..services.subscription import get_active_subscriptions, update_notification_time
+from ..services.subscription import get_subscriptions_grouped_by_user, update_notification_time, update_digest_time
 from ..services.email import send_email
 from ..services.trade import process_pending_transactions
+from ..services.trading_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,6 @@ def fetch_and_update_funds():
     except Exception as e:
         logger.error(f"Failed to update fund list: {e}")
 
-from ..services.subscription import get_active_subscriptions, update_notification_time, update_digest_time
-from ..services.trading_calendar import is_trading_day
 
 def collect_intraday_snapshots():
     now_cst = datetime.now(CST)
@@ -59,7 +58,12 @@ def collect_intraday_snapshots():
 
     conn = get_db_connection()
     cur = dict_cursor(conn)
-    cur.execute("SELECT DISTINCT code FROM positions WHERE shares > 0")
+    cur.execute("""
+        SELECT DISTINCT p.code
+        FROM positions p
+        JOIN accounts a ON p.account_id = a.id
+        WHERE p.shares > 0
+    """)
     codes = [row["code"] for row in cur.fetchall()]
 
     if not codes:
@@ -106,7 +110,6 @@ def cleanup_old_intraday_data():
 
 def update_holdings_nav():
     from .fund import get_fund_history
-    from .trading_calendar import is_trading_day
 
     now_cst = datetime.now(CST)
     today = now_cst.date()
@@ -119,7 +122,13 @@ def update_holdings_nav():
 
     conn = get_db_connection()
     cur = dict_cursor(conn)
-    cur.execute("SELECT DISTINCT code FROM positions WHERE shares > 0")
+    cur.execute("""
+        SELECT DISTINCT p.code
+        FROM positions p
+        JOIN accounts a ON p.account_id = a.id
+        JOIN users u ON a.user_id = u.id
+        WHERE p.shares > 0 AND u.is_active = 1
+    """)
     codes = [row["code"] for row in cur.fetchall()]
     release_db_connection(conn)
 
@@ -144,18 +153,9 @@ def update_holdings_nav():
     if updated > 0 or pending > 0:
         logger.info(f"NAV update: {updated} updated, {pending} pending (total {len(codes)})")
 
-def check_subscriptions():
-    logger.info("Checking subscriptions...")
-    subs = get_active_subscriptions()
-    if not subs:
-        return
 
-    now_cst = datetime.now(CST)
-    today_str = now_cst.strftime("%Y-%m-%d")
-    current_time_str = now_cst.strftime("%H:%M")
-
-    valuations = {}
-
+def _process_user_subscriptions(user_id, subs, valuations, today_str, current_time_str, now_cst):
+    """处理单个用户的所有订阅通知。"""
     for sub in subs:
         code = sub["code"]
         sub_id = sub["id"]
@@ -165,20 +165,21 @@ def check_subscriptions():
             valuations[code] = get_combined_valuation(code)
 
         data = valuations[code]
-        if not data: continue
+        if not data:
+            continue
 
         est_rate = data.get("estRate", 0.0)
         fund_name = data.get("name", code)
 
-        if sub["enable_volatility"]:
-            last_notified = str(sub["last_notified_at"]) if sub["last_notified_at"] else None
+        if sub.get("enable_volatility"):
+            last_notified = str(sub["last_notified_at"]) if sub.get("last_notified_at") else None
             if not (last_notified and last_notified.startswith(today_str)):
                 triggered = False
                 reason = ""
-                if sub["threshold_up"] and sub["threshold_up"] > 0 and est_rate >= sub["threshold_up"]:
+                if sub.get("threshold_up") and sub["threshold_up"] > 0 and est_rate >= sub["threshold_up"]:
                     triggered = True
                     reason = f"上涨已达到 {est_rate}% (阈值: {sub['threshold_up']}%)"
-                elif sub["threshold_down"] and sub["threshold_down"] < 0 and est_rate <= sub["threshold_down"]:
+                elif sub.get("threshold_down") and sub["threshold_down"] < 0 and est_rate <= sub["threshold_down"]:
                     triggered = True
                     reason = f"下跌已达到 {est_rate}% (阈值: {sub['threshold_down']}%)"
 
@@ -190,11 +191,11 @@ def check_subscriptions():
                     <p>触发原因: {reason}</p>
                     <p>估值时间: {data.get('time')}</p>
                     <hr/><p>此邮件由 FundVal Live 自动发送。</p>"""
-                    if send_email(email, subject, content, is_html=True):
+                    if send_email(email, subject, content, is_html=True, user_id=user_id):
                         update_notification_time(sub_id)
 
-        if sub["enable_digest"]:
-            last_digest = str(sub["last_digest_at"]) if sub["last_digest_at"] else None
+        if sub.get("enable_digest"):
+            last_digest = str(sub["last_digest_at"]) if sub.get("last_digest_at") else None
             if not (last_digest and last_digest.startswith(today_str)):
                 if current_time_str >= sub["digest_time"]:
                     subject = f"【每日总结】{fund_name} ({code}) 今日估值汇总"
@@ -202,10 +203,31 @@ def check_subscriptions():
                     <p>基金: {fund_name} ({code})</p>
                     <p>今日收盘/最新估值: {data.get('estimate', 'N/A')}</p>
                     <p>今日涨跌幅: <b>{est_rate}%</b></p>
-                    <p>总结时间: {now_cst.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p>总结时间: {now_cst.strftime('%Y-%m-%d %H:%M:%S') if now_cst else ''}</p>
                     <hr/><p>祝您投资愉快！</p>"""
-                    if send_email(email, subject, content, is_html=True):
+                    if send_email(email, subject, content, is_html=True, user_id=user_id):
                         update_digest_time(sub_id)
+
+def check_subscriptions():
+    logger.info("Checking subscriptions...")
+    grouped = get_subscriptions_grouped_by_user()
+    if not grouped:
+        return
+
+    now_cst = datetime.now(CST)
+    today_str = now_cst.strftime("%Y-%m-%d")
+    current_time_str = now_cst.strftime("%H:%M")
+
+    valuations = {}
+
+    for user_id, subs in grouped.items():
+        try:
+            _process_user_subscriptions(
+                user_id=user_id, subs=subs, valuations=valuations,
+                today_str=today_str, current_time_str=current_time_str, now_cst=now_cst
+            )
+        except Exception as e:
+            logger.error(f"Error processing subscriptions for user {user_id}: {e}")
 
 def start_scheduler():
     def _run():

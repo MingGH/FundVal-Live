@@ -105,17 +105,7 @@ metadata:
   namespace: 996ninja
 spec:
   rules:
-    - host: demo-fundval.ddgod.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: fundval-service
-                port:
-                  number: 80
-    - host: fund.onetool.app
+    - host: fund.gongju.dev
       http:
         paths:
           - path: /

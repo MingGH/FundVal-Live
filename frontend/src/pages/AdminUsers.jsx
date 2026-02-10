@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UserPlus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { UserPlus, Trash2, ToggleLeft, ToggleRight, KeyRound } from 'lucide-react';
 import { getUsers, createUser, updateUser, deleteUser } from '../services/api';
 
 export default function AdminUsers() {
@@ -7,6 +7,8 @@ export default function AdminUsers() {
   const [form, setForm] = useState({ username: '', password: '', role: 'user' });
   const [error, setError] = useState('');
   const [createdInfo, setCreatedInfo] = useState(null);
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
 
   const load = async () => {
     try { setUsers(await getUsers()); } catch { setError('加载用户列表失败'); }
@@ -34,6 +36,17 @@ export default function AdminUsers() {
     if (!confirm(`确定删除用户 ${u.username}？`)) return;
     try { await deleteUser(u.id); load(); }
     catch (err) { setError(err.response?.data?.detail || '删除失败'); }
+  };
+
+  const handleResetPassword = async (u) => {
+    if (!newPassword) return;
+    setError('');
+    try {
+      await updateUser(u.id, { password: newPassword });
+      setCreatedInfo({ username: u.username, password: newPassword });
+      setResetPwUser(null);
+      setNewPassword('');
+    } catch (err) { setError(err.response?.data?.detail || '重置密码失败'); }
   };
 
   const cellStyle = { padding: '8px 12px', borderBottom: '1px solid #eee', textAlign: 'left' };
@@ -101,10 +114,28 @@ export default function AdminUsers() {
                   style={{ background: 'none', border: 'none', cursor: 'pointer', marginRight: 8 }}>
                   {u.is_active ? <ToggleRight size={18} color="#38a169" /> : <ToggleLeft size={18} color="#a0a0a0" />}
                 </button>
+                <button onClick={() => { setResetPwUser(u); setNewPassword(''); }} title="重置密码"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', marginRight: 8 }}>
+                  <KeyRound size={16} color="#3182ce" />
+                </button>
                 <button onClick={() => handleDelete(u)} title="删除"
                   style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                   <Trash2 size={16} color="#e53e3e" />
                 </button>
+                {resetPwUser?.id === u.id && (
+                  <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                    <input placeholder="新密码" type="text" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                      style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #d0d0d0', fontSize: 13, width: 120 }} />
+                    <button onClick={() => handleResetPassword(u)}
+                      style={{ padding: '4px 8px', borderRadius: 4, border: 'none', background: '#3182ce', color: '#fff', cursor: 'pointer', fontSize: 13 }}>
+                      确认
+                    </button>
+                    <button onClick={() => setResetPwUser(null)}
+                      style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer', fontSize: 13 }}>
+                      取消
+                    </button>
+                  </div>
+                )}
               </td>
             </tr>
           ))}
