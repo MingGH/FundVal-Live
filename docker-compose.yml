@@ -1,16 +1,33 @@
 services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: fundval
+      MYSQL_USER: fundval
+      MYSQL_PASSWORD: ${DB_PASSWORD:-changeme}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   fundval:
-    # 使用 GitHub Container Registry 镜像（推荐）
     image: ghcr.io/ye-yu-mo/fundval-live:latest
-
-    # 或本地构建
     # build: .
-
     ports:
       - "21345:21345"
-    volumes:
-      - fundval-data:/app/backend/data
+    depends_on:
+      mysql:
+        condition: service_healthy
     environment:
+      - DATABASE_URL=mysql://fundval:${DB_PASSWORD:-changeme}@mysql:3306/fundval
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+
       # AI Configuration (optional)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_API_BASE=${OPENAI_API_BASE:-https://api.openai.com/v1}
@@ -25,4 +42,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  fundval-data:
+  mysqldata:

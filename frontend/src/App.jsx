@@ -5,22 +5,41 @@ import {
   Wallet,
   LayoutGrid,
   Settings as SettingsIcon,
-  Users
+  Users,
+  LogOut,
+  Shield
 } from 'lucide-react';
 import { FundList } from './pages/FundList';
 import { FundDetail } from './pages/FundDetail';
 import Account from './pages/Account';
 import Settings from './pages/Settings';
+import LoginPage from './pages/LoginPage';
+import AdminUsers from './pages/AdminUsers';
 import { SubscribeModal } from './components/SubscribeModal';
 import { AccountModal } from './components/AccountModal';
-import { searchFunds, getFundDetail, getAccountPositions, subscribeFund, getAccounts, getPreferences, updatePreferences } from './services/api';
+import { searchFunds, getFundDetail, getAccountPositions, subscribeFund, getAccounts, getPreferences, updatePreferences, isLoggedIn, getStoredUser, logout as apiLogout } from './services/api';
 import packageJson from '../../package.json';
 
 const APP_VERSION = packageJson.version;
 
 export default function App() {
+  // --- Auth State ---
+  const [user, setUser] = useState(getStoredUser());
+  const [authed, setAuthed] = useState(isLoggedIn());
+
+  useEffect(() => {
+    const onLogout = () => { setAuthed(false); setUser(null); };
+    window.addEventListener('auth:logout', onLogout);
+    return () => window.removeEventListener('auth:logout', onLogout);
+  }, []);
+
+  const handleLogin = (u) => { setUser(u); setAuthed(true); };
+  const handleLogout = () => { apiLogout(); setAuthed(false); setUser(null); };
+
+  if (!authed) return <LoginPage onLogin={handleLogin} />;
+
   // --- State ---
-  const [currentView, setCurrentView] = useState('list'); // 'list' | 'detail' | 'account' | 'settings'
+  const [currentView, setCurrentView] = useState('list'); // 'list' | 'detail' | 'account' | 'settings' | 'admin'
   const [currentAccount, setCurrentAccount] = useState(1);
   const [accounts, setAccounts] = useState([]);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -368,6 +387,18 @@ export default function App() {
                    >
                       <SettingsIcon className="w-6 h-6" />
                    </button>
+                   {user?.role === 'admin' && (
+                     <button
+                        onClick={() => setCurrentView('admin')}
+                        className={`p-2 rounded-lg transition-colors ${currentView === 'admin' ? 'bg-blue-100 text-blue-700' : 'hover:bg-slate-100 text-slate-500'}`}
+                        title="用户管理"
+                     >
+                        <Shield className="w-6 h-6" />
+                     </button>
+                   )}
+                   <button onClick={handleLogout} className="p-2 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors" title="退出登录">
+                     <LogOut className="w-5 h-5" />
+                   </button>
                 </div>
               )}
 
@@ -396,7 +427,7 @@ export default function App() {
 
               <div>
                 <h1 className="text-lg font-bold text-slate-800 leading-tight">
-                  {currentView === 'detail' ? '基金详情' : (currentView === 'account' ? '我的账户' : (currentView === 'settings' ? '设置' : 'FundVal Live'))}
+                  {currentView === 'detail' ? '基金详情' : (currentView === 'account' ? '我的账户' : (currentView === 'settings' ? '设置' : (currentView === 'admin' ? '用户管理' : 'FundVal Live')))}
                 </h1>
                 <p className="text-xs text-slate-400">
                   {currentView === 'detail' ? '盘中实时估值分析' : '盘中估值参考工具'}
@@ -476,6 +507,10 @@ export default function App() {
 
         {currentView === 'settings' && (
           <Settings />
+        )}
+
+        {currentView === 'admin' && user?.role === 'admin' && (
+          <AdminUsers />
         )}
 
         {currentView === 'detail' && (

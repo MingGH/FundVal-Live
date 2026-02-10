@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-加仓/减仓：T+1 确认后用真实净值更新持仓，并写入操作记录。
-"""
+"""加仓/减仓：T+1 确认后用真实净值更新持仓，并写入操作记录。"""
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from ..db import get_db_connection
+from ..db import get_db_connection, release_db_connection, dict_cursor
 from .fund import get_nav_on_date
 from .account import upsert_position, remove_position
 from .trading_calendar import get_confirm_date, confirm_date_to_str
@@ -16,20 +14,16 @@ logger = logging.getLogger(__name__)
 
 def _get_position(account_id: int, code: str) -> Optional[Dict[str, Any]]:
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT code, cost, shares FROM positions WHERE account_id = ? AND code = ?", (account_id, code))
-    row = cursor.fetchone()
-    conn.close()
+    cur = dict_cursor(conn)
+    cur.execute("SELECT code, cost, shares FROM positions WHERE account_id = %s AND code = %s", (account_id, code))
+    row = cur.fetchone()
+    release_db_connection(conn)
     if not row:
         return None
     return {"code": row["code"], "cost": float(row["cost"]), "shares": float(row["shares"])}
 
 
 def add_position_trade(account_id: int, code: str, amount_cny: float, trade_ts: Optional[datetime] = None) -> Dict[str, Any]:
-    """
-    加仓：按交易时间确定确认日，若该日净值已公布则立即更新持仓并记流水；
-    否则写入待确认流水，等定时任务用真实净值补算。
-    """
     if amount_cny <= 0:
         return {"ok": False, "message": "加仓金额必须大于 0"}
     confirm_d = get_confirm_date(trade_ts)
@@ -37,7 +31,7 @@ def add_position_trade(account_id: int, code: str, amount_cny: float, trade_ts: 
     nav = get_nav_on_date(code, confirm_date_str)
 
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cur = dict_cursor(conn)
 
     if nav and nav > 0:
         shares_added = round(amount_cny / nav, 4)
@@ -50,45 +44,29 @@ def add_position_trade(account_id: int, code: str, amount_cny: float, trade_ts: 
             new_shares = shares_added
             new_cost = nav
         upsert_position(account_id, code, new_cost, new_shares)
-        cursor.execute(
-            """
-            INSERT INTO transactions (account_id, code, op_type, amount_cny, confirm_date, confirm_nav, shares_added, cost_after, applied_at)
-            VALUES (?, ?, 'add', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
+        cur.execute(
+            """INSERT INTO transactions (account_id, code, op_type, amount_cny, confirm_date, confirm_nav, shares_added, cost_after, applied_at)
+            VALUES (%s, %s, 'add', %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)""",
             (account_id, code, amount_cny, confirm_date_str, nav, shares_added, new_cost),
         )
         conn.commit()
-        conn.close()
-        return {
-            "ok": True,
-            "confirm_date": confirm_date_str,
-            "confirm_nav": nav,
-            "shares_added": shares_added,
-            "cost_after": new_cost,
-            "shares_after": new_shares,
-        }
+        release_db_connection(conn)
+        return {"ok": True, "confirm_date": confirm_date_str, "confirm_nav": nav,
+                "shares_added": shares_added, "cost_after": new_cost, "shares_after": new_shares}
     else:
-        cursor.execute(
-            """
-            INSERT INTO transactions (account_id, code, op_type, amount_cny, confirm_date, confirm_nav, shares_added, cost_after, applied_at)
-            VALUES (?, ?, 'add', ?, ?, NULL, NULL, NULL, NULL)
-            """,
+        cur.execute(
+            """INSERT INTO transactions (account_id, code, op_type, amount_cny, confirm_date)
+            VALUES (%s, %s, 'add', %s, %s)""",
             (account_id, code, amount_cny, confirm_date_str),
         )
         conn.commit()
-        conn.close()
-        return {
-            "ok": True,
-            "pending": True,
-            "message": f"已记录加仓，确认日为 {confirm_date_str}，待净值公布后自动更新持仓",
-            "confirm_date": confirm_date_str,
-        }
+        release_db_connection(conn)
+        return {"ok": True, "pending": True,
+                "message": f"已记录加仓，确认日为 {confirm_date_str}，待净值公布后自动更新持仓",
+                "confirm_date": confirm_date_str}
 
 
 def reduce_position_trade(account_id: int, code: str, shares_redeemed: float, trade_ts: Optional[datetime] = None) -> Dict[str, Any]:
-    """
-    减仓：按交易时间确定确认日，若该日净值已公布则立即扣减份额并记流水；否则待确认。
-    """
     if shares_redeemed <= 0:
         return {"ok": False, "message": "减仓份额必须大于 0"}
     pos = _get_position(account_id, code)
@@ -102,7 +80,7 @@ def reduce_position_trade(account_id: int, code: str, shares_redeemed: float, tr
     nav = get_nav_on_date(code, confirm_date_str)
 
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cur = dict_cursor(conn)
 
     if nav and nav > 0:
         amount_cny = round(shares_redeemed * nav, 2)
@@ -114,97 +92,61 @@ def reduce_position_trade(account_id: int, code: str, shares_redeemed: float, tr
         else:
             upsert_position(account_id, code, new_cost, new_shares)
             cost_after = new_cost
-        cursor.execute(
-            """
-            INSERT INTO transactions (account_id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav, cost_after, applied_at)
-            VALUES (?, ?, 'reduce', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
+        cur.execute(
+            """INSERT INTO transactions (account_id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav, cost_after, applied_at)
+            VALUES (%s, %s, 'reduce', %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)""",
             (account_id, code, amount_cny, shares_redeemed, confirm_date_str, nav, cost_after),
         )
         conn.commit()
-        conn.close()
-        return {
-            "ok": True,
-            "confirm_date": confirm_date_str,
-            "confirm_nav": nav,
-            "amount_cny": amount_cny,
-            "shares_after": new_shares,
-        }
+        release_db_connection(conn)
+        return {"ok": True, "confirm_date": confirm_date_str, "confirm_nav": nav,
+                "amount_cny": amount_cny, "shares_after": new_shares}
     else:
-        cursor.execute(
-            """
-            INSERT INTO transactions (account_id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav, cost_after, applied_at)
-            VALUES (?, ?, 'reduce', NULL, ?, ?, NULL, NULL, NULL)
-            """,
+        cur.execute(
+            """INSERT INTO transactions (account_id, code, op_type, shares_redeemed, confirm_date)
+            VALUES (%s, %s, 'reduce', %s, %s)""",
             (account_id, code, shares_redeemed, confirm_date_str),
         )
         conn.commit()
-        conn.close()
-        return {
-            "ok": True,
-            "pending": True,
-            "message": f"已记录减仓，确认日为 {confirm_date_str}，待净值公布后自动更新持仓",
-            "confirm_date": confirm_date_str,
-        }
+        release_db_connection(conn)
+        return {"ok": True, "pending": True,
+                "message": f"已记录减仓，确认日为 {confirm_date_str}，待净值公布后自动更新持仓",
+                "confirm_date": confirm_date_str}
 
 
 def list_transactions(account_id: int = None, code: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
-    """操作记录列表，可选按账户和基金筛选。"""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cur = dict_cursor(conn)
 
-    if account_id and code:
-        cursor.execute(
-            """
-            SELECT id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav,
-                   shares_added, cost_after, created_at, applied_at
-            FROM transactions WHERE account_id = ? AND code = ? ORDER BY id DESC LIMIT ?
-            """,
-            (account_id, code, limit),
-        )
-    elif account_id:
-        cursor.execute(
-            """
-            SELECT id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav,
-                   shares_added, cost_after, created_at, applied_at
-            FROM transactions WHERE account_id = ? ORDER BY id DESC LIMIT ?
-            """,
-            (account_id, limit),
-        )
-    elif code:
-        cursor.execute(
-            """
-            SELECT id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav,
-                   shares_added, cost_after, created_at, applied_at
-            FROM transactions WHERE code = ? ORDER BY id DESC LIMIT ?
-            """,
-            (code, limit),
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav,
-                   shares_added, cost_after, created_at, applied_at
-            FROM transactions ORDER BY id DESC LIMIT ?
-            """,
-            (limit,),
-        )
-    rows = cursor.fetchall()
-    conn.close()
+    conditions = []
+    params = []
+    if account_id:
+        conditions.append("account_id = %s")
+        params.append(account_id)
+    if code:
+        conditions.append("code = %s")
+        params.append(code)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.append(limit)
+
+    cur.execute(f"""
+        SELECT id, code, op_type, amount_cny, shares_redeemed, confirm_date, confirm_nav,
+               shares_added, cost_after, created_at, applied_at
+        FROM transactions {where} ORDER BY id DESC LIMIT %s
+    """, params)
+    rows = cur.fetchall()
+    release_db_connection(conn)
+
     out = []
     for r in rows:
         out.append({
-            "id": r["id"],
-            "code": r["code"],
-            "op_type": r["op_type"],
-            "amount_cny": r["amount_cny"],
-            "shares_redeemed": r["shares_redeemed"],
-            "confirm_date": r["confirm_date"],
-            "confirm_nav": r["confirm_nav"],
-            "shares_added": r["shares_added"],
-            "cost_after": r["cost_after"],
-            "created_at": r["created_at"],
-            "applied_at": r["applied_at"],
+            "id": r["id"], "code": r["code"], "op_type": r["op_type"],
+            "amount_cny": r["amount_cny"], "shares_redeemed": r["shares_redeemed"],
+            "confirm_date": r["confirm_date"], "confirm_nav": r["confirm_nav"],
+            "shares_added": r["shares_added"], "cost_after": r["cost_after"],
+            "created_at": str(r["created_at"]) if r["created_at"] else None,
+            "applied_at": str(r["applied_at"]) if r["applied_at"] else None,
         })
     return out
 
@@ -212,41 +154,40 @@ def list_transactions(account_id: int = None, code: Optional[str] = None, limit:
 def process_pending_transactions() -> int:
     """处理待确认流水：对 confirm_nav 为空的记录拉取确认日净值并更新持仓。"""
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
+    cur = dict_cursor(conn)
+    cur.execute(
         "SELECT id, account_id, code, op_type, amount_cny, shares_redeemed, confirm_date FROM transactions WHERE applied_at IS NULL AND confirm_nav IS NULL"
     )
-    pending = cursor.fetchall()
-    conn.close()
+    pending = cur.fetchall()
+    release_db_connection(conn)
+
     applied = 0
     for row in pending:
-        tid, account_id, code, op_type, amount_cny, shares_redeemed, confirm_date = (
-            row["id"], row["account_id"], row["code"], row["op_type"], row["amount_cny"], row["shares_redeemed"], row["confirm_date"]
-        )
+        tid, account_id, code, op_type = row["id"], row["account_id"], row["code"], row["op_type"]
+        amount_cny, shares_redeemed, confirm_date = row["amount_cny"], row["shares_redeemed"], row["confirm_date"]
         nav = get_nav_on_date(code, confirm_date) if confirm_date else None
         if not nav or nav <= 0:
             continue
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cur = dict_cursor(conn)
         if op_type == "add" and amount_cny:
             shares_added = round(amount_cny / nav, 4)
             pos = _get_position(account_id, code)
             if pos:
-                old_c, old_s = pos["cost"], pos["shares"]
-                new_shares = old_s + shares_added
-                new_cost = round((old_c * old_s + nav * shares_added) / new_shares, 4)
+                new_shares = pos["shares"] + shares_added
+                new_cost = round((pos["cost"] * pos["shares"] + nav * shares_added) / new_shares, 4)
             else:
                 new_shares = shares_added
                 new_cost = nav
             upsert_position(account_id, code, new_cost, new_shares)
-            cursor.execute(
-                "UPDATE transactions SET confirm_nav = ?, shares_added = ?, cost_after = ?, applied_at = CURRENT_TIMESTAMP WHERE id = ?",
+            cur.execute(
+                "UPDATE transactions SET confirm_nav = %s, shares_added = %s, cost_after = %s, applied_at = CURRENT_TIMESTAMP WHERE id = %s",
                 (nav, shares_added, new_cost, tid),
             )
         elif op_type == "reduce" and shares_redeemed:
             pos = _get_position(account_id, code)
             if not pos:
-                conn.close()
+                release_db_connection(conn)
                 continue
             amount_cny = round(shares_redeemed * nav, 2)
             new_shares = round(pos["shares"] - shares_redeemed, 4)
@@ -255,14 +196,14 @@ def process_pending_transactions() -> int:
                 remove_position(account_id, code)
             else:
                 upsert_position(account_id, code, pos["cost"], new_shares)
-            cursor.execute(
-                "UPDATE transactions SET confirm_nav = ?, amount_cny = ?, cost_after = ?, applied_at = CURRENT_TIMESTAMP WHERE id = ?",
+            cur.execute(
+                "UPDATE transactions SET confirm_nav = %s, amount_cny = %s, cost_after = %s, applied_at = CURRENT_TIMESTAMP WHERE id = %s",
                 (nav, amount_cny, cost_after, tid),
             )
         else:
-            conn.close()
+            release_db_connection(conn)
             continue
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
         applied += 1
     return applied

@@ -1,60 +1,57 @@
 import os
 import sys
-import time
 from pathlib import Path
 from dotenv import load_dotenv
 
 # 判断是否为打包后的应用
 if getattr(sys, 'frozen', False):
-    # 打包后：使用用户目录
     BASE_DIR = Path.home() / '.fundval-live'
     BASE_DIR.mkdir(parents=True, exist_ok=True)
 else:
-    # 开发模式：使用项目目录
     BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load .env from project root (one level up from backend)
+# Load .env from project root
 if not getattr(sys, 'frozen', False):
     load_dotenv(BASE_DIR.parent / ".env")
+
 
 def _load_settings_from_db():
     """从数据库读取配置，解密加密字段"""
     try:
-        import sqlite3
+        from .db import get_db_connection, release_db_connection, dict_cursor
         from .crypto import decrypt_value
 
-        db_path = os.path.join(BASE_DIR, "data", "fund.db")
-        if not os.path.exists(db_path):
-            return {}
-
-        conn = sqlite3.connect(db_path, timeout=5.0)
-        cursor = conn.cursor()
-        cursor.execute("SELECT key, value, encrypted FROM settings")
-        rows = cursor.fetchall()
-        conn.close()
+        conn = get_db_connection()
+        cur = dict_cursor(conn)
+        cur.execute("SELECT `key`, value, encrypted FROM settings")
+        rows = cur.fetchall()
+        release_db_connection(conn)
 
         settings = {}
         for row in rows:
-            key, value, encrypted = row
+            key, value, encrypted = row["key"], row["value"], row["encrypted"]
             if encrypted and value:
                 value = decrypt_value(value)
             settings[key] = value
         return settings
-    except Exception as e:
-        print(f"Failed to load settings from DB: {e}")
+    except Exception:
         return {}
 
+
 def _get_setting(key: str, default: str = "") -> str:
-    """获取配置，优先级：数据库 > .env > 默认值"""
+    """获取配置，优先级：环境变量 > 数据库 > 默认值"""
+    env_val = os.getenv(key)
+    if env_val:
+        return env_val
     db_settings = _load_settings_from_db()
     if key in db_settings and db_settings[key]:
         return db_settings[key]
-    return os.getenv(key, default)
+    return default
+
 
 class Config:
     # Database
-    DB_PATH = os.path.join(BASE_DIR, "data", "fund.db")
-    DB_URL = f"sqlite:///{DB_PATH}"
+    DATABASE_URL = os.getenv("DATABASE_URL", "mysql://funduser:fundpass@localhost:3306/fundval")
 
     # Data Sources
     DEFAULT_DATA_SOURCE = "eastmoney"
@@ -66,19 +63,29 @@ class Config:
 
     # Update Intervals
     FUND_LIST_UPDATE_INTERVAL = 86400  # 24 hours
-    STOCK_SPOT_CACHE_DURATION = 60     # 1 minute (for holdings calculation)
+    STOCK_SPOT_CACHE_DURATION = 60     # 1 minute
 
-    # AI Configuration - 动态读取
-    OPENAI_API_KEY = _get_setting("OPENAI_API_KEY", "")
-    OPENAI_API_BASE = _get_setting("OPENAI_API_BASE", "https://api.openai.com/v1")
-    AI_MODEL_NAME = _get_setting("AI_MODEL_NAME", "gpt-3.5-turbo")
+    # AI Configuration - 延迟读取，避免模块导入时连接数据库
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    AI_MODEL_NAME = os.getenv("AI_MODEL_NAME", "gpt-3.5-turbo")
 
-    # Email / Subscription Configuration - 动态读取
-    SMTP_HOST = _get_setting("SMTP_HOST", "smtp.gmail.com")
-    SMTP_PORT = int(_get_setting("SMTP_PORT", "587"))
-    SMTP_USER = _get_setting("SMTP_USER", "")
-    SMTP_PASSWORD = _get_setting("SMTP_PASSWORD", "")
-    EMAIL_FROM = _get_setting("EMAIL_FROM", "noreply@fundval.live")
+    # Email / Subscription Configuration
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    EMAIL_FROM = os.getenv("EMAIL_FROM", "noreply@fundval.live")
+
+    _initialized = False
+
+    @classmethod
+    def _ensure_loaded(cls):
+        """首次访问时从数据库加载配置"""
+        if cls._initialized:
+            return
+        cls._initialized = True
+        cls.reload()
 
     @classmethod
     def reload(cls):
@@ -91,4 +98,3 @@ class Config:
         cls.SMTP_USER = _get_setting("SMTP_USER", "")
         cls.SMTP_PASSWORD = _get_setting("SMTP_PASSWORD", "")
         cls.EMAIL_FROM = _get_setting("EMAIL_FROM", "noreply@fundval.live")
-

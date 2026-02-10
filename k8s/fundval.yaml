@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fundval
+  namespace: fundval
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fundval
+  template:
+    metadata:
+      labels:
+        app: fundval
+    spec:
+      containers:
+        - name: fundval
+          image: ghcr.io/ye-yu-mo/fundval-live:latest
+          ports:
+            - containerPort: 21345
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: DB_PASSWORD
+            - name: DATABASE_URL
+              value: "mysql://fundval:$(DB_PASSWORD)@mysql-host:3306/fundval"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: JWT_SECRET
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: ADMIN_PASSWORD
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: OPENAI_API_KEY
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: SMTP_USER
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: SMTP_PASSWORD
+          envFrom:
+            - configMapRef:
+                name: fundval-config
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 21345
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fundval
+  namespace: fundval
+spec:
+  selector:
+    app: fundval
+  ports:
+    - port: 21345
+      targetPort: 21345

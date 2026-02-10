@@ -11,8 +11,9 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 
-from .routers import funds, ai, account, settings, data
+from .routers import funds, ai, account, settings, data, auth, admin
 from .db import init_db
+from .config import Config
 from .services.scheduler import start_scheduler
 
 # Request size limit (10MB)
@@ -107,6 +108,7 @@ APP_VERSION = get_version()
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
+    Config._ensure_loaded()
     start_scheduler()
     yield
     # Shutdown
@@ -132,6 +134,8 @@ app.include_router(ai.router, prefix="/api")
 app.include_router(account.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(data.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 
 # Project info endpoint
 @app.get("/api/info")

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fundval-config
+  namespace: fundval
+data:
+  OPENAI_API_BASE: "https://api.openai.com/v1"
+  AI_MODEL_NAME: "gpt-3.5-turbo"
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  EMAIL_FROM: "noreply@fundval.live"

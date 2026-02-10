@@ -1,94 +1,272 @@
-import sqlite3
-import logging
 import os
-from pathlib import Path
-from .config import Config
+import logging
+from contextlib import contextmanager
+import pymysql
+from dbutils.pooled_db import PooledDB
 
 logger = logging.getLogger(__name__)
 
-def get_db_connection():
-    # 确保数据库目录存在
-    db_dir = Path(Config.DB_PATH).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
+_pool = None
 
-    conn = sqlite3.connect(Config.DB_PATH, check_same_thread=False, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    # Enable WAL mode for better concurrency
-    conn.execute("PRAGMA journal_mode=WAL")
+
+def _get_database_url():
+    return os.getenv("DATABASE_URL", "mysql://funduser:fundpass@localhost:3306/fundval")
+
+
+def _parse_mysql_url(url: str) -> dict:
+    """Parse mysql://user:pass@host:port/db into connection kwargs."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    return {
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 3306,
+        "user": parsed.username or "root",
+        "password": parsed.password or "",
+        "database": parsed.path.lstrip("/") or "fundval",
+        "charset": "utf8mb4",
+    }
+
+
+def _init_pool():
+    global _pool
+    if _pool is None:
+        params = _parse_mysql_url(_get_database_url())
+        _pool = PooledDB(
+            creator=pymysql,
+            mincached=2,
+            maxcached=20,
+            maxconnections=20,
+            blocking=True,
+            cursorclass=pymysql.cursors.DictCursor,
+            **params,
+        )
+
+
+def get_db_connection():
+    _init_pool()
+    conn = _pool.connection()
     return conn
+
+
+def release_db_connection(conn):
+    if conn:
+        conn.close()
+
+
+@contextmanager
+def get_db():
+    conn = get_db_connection()
+    try:
+        yield conn
+    finally:
+        release_db_connection(conn)
+
+
+def dict_cursor(conn):
+    return conn.cursor(pymysql.cursors.DictCursor)
+
 
 def init_db():
     """Initialize the database schema with migration support."""
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cur = dict_cursor(conn)
 
-    # Check database version
-    cursor.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.commit()
 
-    cursor.execute("SELECT MAX(version) FROM schema_version")
-    current_version = cursor.fetchone()[0] or 0
-
+    cur.execute("SELECT MAX(version) AS v FROM schema_version")
+    row = cur.fetchone()
+    current_version = row["v"] or 0
     logger.info(f"Current database schema version: {current_version}")
 
-    # Funds table - simplistic design, exactly what we need
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS funds (
-            code TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            type TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    if current_version < 1:
+        logger.info("Running migration v1: base tables")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(100) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'user',
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS funds (
+                code VARCHAR(20) PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("CREATE INDEX idx_funds_name ON funds(name(100))")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER AUTO_INCREMENT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_accounts_user_name (user_id, name),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                account_id INTEGER NOT NULL,
+                code VARCHAR(20) NOT NULL,
+                cost REAL NOT NULL DEFAULT 0.0,
+                shares REAL NOT NULL DEFAULT 0.0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (account_id, code),
+                FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+            )
+        """)
+        cur.execute("CREATE INDEX idx_positions_account ON positions(account_id)")
+        cur.execute("CREATE INDEX idx_positions_code ON positions(code)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER AUTO_INCREMENT PRIMARY KEY,
+                account_id INTEGER NOT NULL,
+                code VARCHAR(20) NOT NULL,
+                op_type VARCHAR(20) NOT NULL,
+                amount_cny REAL,
+                shares_redeemed REAL,
+                confirm_date VARCHAR(20) NOT NULL,
+                confirm_nav REAL,
+                shares_added REAL,
+                cost_after REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                applied_at TIMESTAMP NULL,
+                FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+            )
+        """)
+        cur.execute("CREATE INDEX idx_transactions_account ON transactions(account_id)")
+        cur.execute("CREATE INDEX idx_transactions_code ON transactions(code)")
+        cur.execute("CREATE INDEX idx_transactions_confirm_date ON transactions(confirm_date)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER AUTO_INCREMENT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                code VARCHAR(20) NOT NULL,
+                email VARCHAR(200) NOT NULL,
+                threshold_up REAL,
+                threshold_down REAL,
+                enable_digest TINYINT(1) DEFAULT 0,
+                digest_time VARCHAR(10) DEFAULT '14:45',
+                enable_volatility TINYINT(1) DEFAULT 1,
+                last_notified_at TIMESTAMP NULL,
+                last_digest_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_sub_user_code_email (user_id, code, email),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                `key` VARCHAR(100) PRIMARY KEY,
+                value TEXT,
+                encrypted INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                user_id INTEGER NOT NULL,
+                `key` VARCHAR(100) NOT NULL,
+                value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, `key`),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ai_prompts (
+                id INTEGER AUTO_INCREMENT PRIMARY KEY,
+                user_id INTEGER,
+                name VARCHAR(200) NOT NULL,
+                system_prompt TEXT NOT NULL,
+                user_prompt TEXT NOT NULL,
+                is_default TINYINT(1) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY idx_ai_prompts_user_name (user_id, name),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_history (
+                code VARCHAR(20) NOT NULL,
+                date VARCHAR(20) NOT NULL,
+                nav REAL NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (code, date)
+            )
+        """)
+        cur.execute("CREATE INDEX idx_fund_history_code ON fund_history(code)")
+        cur.execute("CREATE INDEX idx_fund_history_date ON fund_history(date)")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fund_intraday_snapshots (
+                fund_code VARCHAR(20) NOT NULL,
+                date VARCHAR(20) NOT NULL,
+                time VARCHAR(10) NOT NULL,
+                estimate REAL NOT NULL,
+                PRIMARY KEY (fund_code, date, time)
+            )
+        """)
+
+        cur.execute("INSERT IGNORE INTO schema_version (version) VALUES (1)")
+        conn.commit()
+
+    _seed_defaults(conn)
+    conn.commit()
+    release_db_connection(conn)
+    logger.info("Database initialized.")
+
+
+def _seed_defaults(conn):
+    """Seed default admin user, settings, and AI prompts."""
+    cur = dict_cursor(conn)
+
+    cur.execute("SELECT id FROM users WHERE username = 'admin'")
+    if not cur.fetchone():
+        from .auth import hash_password
+        admin_pw = os.getenv("ADMIN_PASSWORD", "admin123")
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, 'admin')",
+            ("admin", hash_password(admin_pw))
         )
-    """)
+        logger.info("Created default admin user")
 
-    # Create an index for searching names, it's cheap and speeds up "LIKE" queries
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_funds_name ON funds(name);
-    """)
+    cur.execute("SELECT id FROM users WHERE username = 'admin'")
+    admin_row = cur.fetchone()
+    admin_id = admin_row["id"] if admin_row else 1
 
-    # Positions table - store user holdings
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS positions (
-            code TEXT PRIMARY KEY,
-            cost REAL NOT NULL DEFAULT 0.0,
-            shares REAL NOT NULL DEFAULT 0.0,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    cur.execute("SELECT id FROM accounts WHERE user_id = %s AND name = %s", (admin_id, "默认账户"))
+    if not cur.fetchone():
+        cur.execute(
+            "INSERT INTO accounts (user_id, name, description) VALUES (%s, %s, %s)",
+            (admin_id, "默认账户", "系统默认账户")
         )
-    """)
 
-    # Subscriptions table - store email alert settings
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS subscriptions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL,
-            email TEXT NOT NULL,
-            threshold_up REAL,
-            threshold_down REAL,
-            enable_digest INTEGER DEFAULT 0,
-            digest_time TEXT DEFAULT '14:45',
-            enable_volatility INTEGER DEFAULT 1,
-            last_notified_at TIMESTAMP,
-            last_digest_at TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(code, email)
-        )
-    """)
-
-    # Settings table - store user configuration (for client/desktop)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT,
-            encrypted INTEGER DEFAULT 0,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 初始化默认配置（如果不存在）
     default_settings = [
         ('OPENAI_API_KEY', '', 1),
         ('OPENAI_API_BASE', 'https://api.openai.com/v1', 0),
@@ -98,195 +276,19 @@ def init_db():
         ('SMTP_USER', '', 0),
         ('SMTP_PASSWORD', '', 1),
         ('EMAIL_FROM', 'noreply@fundval.live', 0),
-        ('INTRADAY_COLLECT_INTERVAL', '5', 0),  # 分时数据采集间隔（分钟）
+        ('INTRADAY_COLLECT_INTERVAL', '5', 0),
     ]
-
-    cursor.executemany("""
-        INSERT OR IGNORE INTO settings (key, value, encrypted) VALUES (?, ?, ?)
-    """, default_settings)
-
-    # Transactions table - add/reduce position log (T+1 confirm by real NAV)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL,
-            op_type TEXT NOT NULL,
-            amount_cny REAL,
-            shares_redeemed REAL,
-            confirm_date TEXT NOT NULL,
-            confirm_nav REAL,
-            shares_added REAL,
-            cost_after REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            applied_at TIMESTAMP
+    for key, value, encrypted in default_settings:
+        cur.execute(
+            "INSERT IGNORE INTO settings (`key`, value, encrypted) VALUES (%s, %s, %s)",
+            (key, value, encrypted)
         )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_code ON transactions(code);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_confirm_date ON transactions(confirm_date);")
 
-    # Fund history table - cache historical NAV data
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS fund_history (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            nav REAL NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (code, date)
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fund_history_code ON fund_history(code);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fund_history_date ON fund_history(date);")
-
-    # Intraday snapshots table - store intraday valuation data for charts
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS fund_intraday_snapshots (
-            fund_code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            time TEXT NOT NULL,
-            estimate REAL NOT NULL,
-            PRIMARY KEY (fund_code, date, time)
-        )
-    """)
-
-    # Migration: Drop old incompatible tables
-    if current_version < 1:
-        logger.info("Running migration: dropping old incompatible tables")
-        cursor.execute("DROP TABLE IF EXISTS valuation_accuracy")
-        cursor.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (1)")
-
-    # Migration: Multi-account support
-    if current_version < 2:
-        logger.info("Running migration: adding multi-account support")
-
-        # 1. Create accounts table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # 2. Insert default account
-        cursor.execute("""
-            INSERT OR IGNORE INTO accounts (id, name, description)
-            VALUES (1, '默认账户', '系统默认账户')
-        """)
-
-        # 3. Check if positions table needs migration
-        cursor.execute("PRAGMA table_info(positions)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        if 'account_id' not in columns:
-            logger.info("Migrating positions table to multi-account")
-
-            # Backup old data
-            cursor.execute("SELECT code, cost, shares, updated_at FROM positions")
-            old_positions = cursor.fetchall()
-
-            # Drop old table
-            cursor.execute("DROP TABLE positions")
-
-            # Create new table with account_id
-            cursor.execute("""
-                CREATE TABLE positions (
-                    account_id INTEGER NOT NULL DEFAULT 1,
-                    code TEXT NOT NULL,
-                    cost REAL NOT NULL DEFAULT 0.0,
-                    shares REAL NOT NULL DEFAULT 0.0,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (account_id, code),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
-                )
-            """)
-
-            # Restore data with default account_id = 1
-            for row in old_positions:
-                cursor.execute("""
-                    INSERT INTO positions (account_id, code, cost, shares, updated_at)
-                    VALUES (1, ?, ?, ?, ?)
-                """, row)
-
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_account ON positions(account_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_code ON positions(code)")
-
-        # 4. Check if transactions table needs migration
-        cursor.execute("PRAGMA table_info(transactions)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        if 'account_id' not in columns:
-            logger.info("Migrating transactions table to multi-account")
-
-            # Backup old data
-            cursor.execute("""
-                SELECT id, code, op_type, amount_cny, shares_redeemed,
-                       confirm_date, confirm_nav, shares_added, cost_after,
-                       created_at, applied_at
-                FROM transactions
-            """)
-            old_transactions = cursor.fetchall()
-
-            # Drop old table
-            cursor.execute("DROP TABLE transactions")
-
-            # Create new table with account_id
-            cursor.execute("""
-                CREATE TABLE transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    account_id INTEGER NOT NULL DEFAULT 1,
-                    code TEXT NOT NULL,
-                    op_type TEXT NOT NULL,
-                    amount_cny REAL,
-                    shares_redeemed REAL,
-                    confirm_date TEXT NOT NULL,
-                    confirm_nav REAL,
-                    shares_added REAL,
-                    cost_after REAL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    applied_at TIMESTAMP,
-                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
-                )
-            """)
-
-            # Restore data with default account_id = 1
-            for row in old_transactions:
-                cursor.execute("""
-                    INSERT INTO transactions
-                    (id, account_id, code, op_type, amount_cny, shares_redeemed,
-                     confirm_date, confirm_nav, shares_added, cost_after,
-                     created_at, applied_at)
-                    VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, row)
-
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_code ON transactions(code)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_confirm_date ON transactions(confirm_date)")
-
-        cursor.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
-
-    # Migration: AI Prompts
-    if current_version < 3:
-        logger.info("Running migration: adding ai_prompts table")
-
-        # Create ai_prompts table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS ai_prompts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                system_prompt TEXT NOT NULL,
-                user_prompt TEXT NOT NULL,
-                is_default INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Insert default Linus-style prompt
-        cursor.execute("""
-            INSERT OR IGNORE INTO ai_prompts (name, system_prompt, user_prompt, is_default)
-            VALUES (?, ?, ?, 1)
+    cur.execute("SELECT id FROM ai_prompts WHERE user_id IS NULL AND name = %s", ("Linus 风格（默认）",))
+    if not cur.fetchone():
+        cur.execute("""
+            INSERT INTO ai_prompts (user_id, name, system_prompt, user_prompt, is_default)
+            VALUES (NULL, %s, %s, %s, TRUE)
         """, (
             "Linus 风格（默认）",
             """角色设定
@@ -339,10 +341,11 @@ def init_db():
 - suggestions: 操作建议列表（1-3条）"""
         ))
 
-        # Insert a gentle-style prompt as alternative
-        cursor.execute("""
-            INSERT OR IGNORE INTO ai_prompts (name, system_prompt, user_prompt, is_default)
-            VALUES (?, ?, ?, 0)
+    cur.execute("SELECT id FROM ai_prompts WHERE user_id IS NULL AND name = %s", ("温和风格",))
+    if not cur.fetchone():
+        cur.execute("""
+            INSERT INTO ai_prompts (user_id, name, system_prompt, user_prompt, is_default)
+            VALUES (NULL, %s, %s, %s, FALSE)
         """, (
             "温和风格",
             """你是一位专业的基金分析师，擅长用通俗易懂的语言解读基金数据。
@@ -385,18 +388,4 @@ def init_db():
 - suggestions: 投资建议列表（2-4条）"""
         ))
 
-        cursor.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (3)")
-
-    # Migration: Add unique constraint to ai_prompts.name
-    if current_version < 4:
-        logger.info("Running migration: adding unique constraint to ai_prompts.name")
-
-        cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_prompts_name ON ai_prompts(name)
-        """)
-
-        cursor.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (4)")
-
     conn.commit()
-    conn.close()
-    logger.info("Database initialized.")

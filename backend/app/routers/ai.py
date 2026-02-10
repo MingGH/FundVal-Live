@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Body, HTTPException
-from typing import List, Dict, Any
+from fastapi import APIRouter, Body, HTTPException, Depends
+from typing import Dict, Any
 from pydantic import BaseModel, Field
 from ..services.ai import ai_service
-from ..db import get_db_connection
+from ..db import get_db_connection, release_db_connection, dict_cursor
+from ..auth import get_current_user
 
 router = APIRouter()
 
@@ -13,96 +14,75 @@ class PromptModel(BaseModel):
     is_default: bool = False
 
 @router.post("/ai/analyze_fund")
-async def analyze_fund(fund_info: Dict[str, Any] = Body(...), prompt_id: int = Body(None)):
-    return await ai_service.analyze_fund(fund_info, prompt_id=prompt_id)
+async def analyze_fund(fund_info: Dict[str, Any] = Body(...), prompt_id: int = Body(None), user: dict = Depends(get_current_user)):
+    return await ai_service.analyze_fund(fund_info, prompt_id=prompt_id, user_id=user["user_id"])
 
 @router.get("/ai/prompts")
-def get_prompts():
-    """获取所有 AI 提示词模板"""
+def get_prompts(user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
-        cursor = conn.cursor()
-        cursor.execute("""
+        cur = dict_cursor(conn)
+        cur.execute("""
             SELECT id, name, system_prompt, user_prompt, is_default, created_at, updated_at
-            FROM ai_prompts
+            FROM ai_prompts WHERE user_id = %s OR user_id IS NULL
             ORDER BY is_default DESC, id ASC
-        """)
-        prompts = [dict(row) for row in cursor.fetchall()]
-        return {"prompts": prompts}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        """, (user["user_id"],))
+        return {"prompts": cur.fetchall()}
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @router.post("/ai/prompts")
-def create_prompt(data: PromptModel):
-    """创建新的 AI 提示词模板"""
+def create_prompt(data: PromptModel, user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
-        cursor = conn.cursor()
-
-        # If this is set as default, unset other defaults
+        cur = dict_cursor(conn)
         if data.is_default:
-            cursor.execute("UPDATE ai_prompts SET is_default = 0")
-
-        cursor.execute("""
-            INSERT INTO ai_prompts (name, system_prompt, user_prompt, is_default)
-            VALUES (?, ?, ?, ?)
-        """, (data.name, data.system_prompt, data.user_prompt, 1 if data.is_default else 0))
-
-        prompt_id = cursor.lastrowid
+            cur.execute("UPDATE ai_prompts SET is_default = FALSE WHERE user_id = %s", (user["user_id"],))
+        cur.execute("""
+            INSERT INTO ai_prompts (name, system_prompt, user_prompt, is_default, user_id)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (data.name, data.system_prompt, data.user_prompt, data.is_default, user["user_id"]))
+        prompt_id = cur.lastrowid
         conn.commit()
-
         return {"ok": True, "id": prompt_id}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @router.put("/ai/prompts/{prompt_id}")
-def update_prompt(prompt_id: int, data: PromptModel):
-    """更新 AI 提示词模板"""
+def update_prompt(prompt_id: int, data: PromptModel, user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
-        cursor = conn.cursor()
-
-        # If this is set as default, unset other defaults
+        cur = dict_cursor(conn)
         if data.is_default:
-            cursor.execute("UPDATE ai_prompts SET is_default = 0 WHERE id != ?", (prompt_id,))
-
-        cursor.execute("""
-            UPDATE ai_prompts
-            SET name = ?, system_prompt = ?, user_prompt = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (data.name, data.system_prompt, data.user_prompt, 1 if data.is_default else 0, prompt_id))
-
+            cur.execute("UPDATE ai_prompts SET is_default = FALSE WHERE user_id = %s AND id != %s", (user["user_id"], prompt_id))
+        cur.execute("""
+            UPDATE ai_prompts SET name = %s, system_prompt = %s, user_prompt = %s, is_default = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s AND (user_id = %s OR user_id IS NULL)
+        """, (data.name, data.system_prompt, data.user_prompt, data.is_default, prompt_id, user["user_id"]))
         conn.commit()
-
         return {"ok": True}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @router.delete("/ai/prompts/{prompt_id}")
-def delete_prompt(prompt_id: int):
-    """删除 AI 提示词模板"""
+def delete_prompt(prompt_id: int, user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     try:
-        cursor = conn.cursor()
-
-        # Check if it's the default prompt
-        cursor.execute("SELECT is_default FROM ai_prompts WHERE id = ?", (prompt_id,))
-        row = cursor.fetchone()
-
-        if row and row["is_default"]:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT is_default FROM ai_prompts WHERE id = %s AND user_id = %s", (prompt_id, user["user_id"]))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="模板不存在")
+        if row["is_default"]:
             raise HTTPException(status_code=400, detail="不能删除默认模板")
-
-        cursor.execute("DELETE FROM ai_prompts WHERE id = ?", (prompt_id,))
+        cur.execute("DELETE FROM ai_prompts WHERE id = %s AND user_id = %s", (prompt_id, user["user_id"]))
         conn.commit()
-
         return {"ok": True}
     except HTTPException:
         raise
@@ -110,5 +90,4 @@ def delete_prompt(prompt_id: int):
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        conn.close()
-
+        release_db_connection(conn)

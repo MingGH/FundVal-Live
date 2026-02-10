@@ -40,3 +40,7 @@ temp/
 features.json
 backend/data/fund.db-shm
 backend/data/fund.db-wal
+
+# Test artifacts
+.pytest_cache
+fundval.log

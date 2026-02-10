@@ -3,6 +3,14 @@ kind: Namespace
 metadata:
   name: 996ninja
 ---
+# Secret "fundval-secrets" must be created manually in the cluster:
+#   kubectl create secret generic fundval-secrets -n 996ninja \
+#     --from-literal=DATABASE_URL="mysql://fundval:<password>@<mysql-host>:3306/fundval" \
+#     --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
+#     --from-literal=ADMIN_PASSWORD="..." \
+#     --from-literal=OPENAI_API_KEY="" \
+#     --from-literal=SMTP_PASSWORD=""
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,12 +34,35 @@ spec:
           ports:
             - containerPort: 21345
           env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: JWT_SECRET
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: ADMIN_PASSWORD
             - name: OPENAI_API_KEY
-              value: ""
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: OPENAI_API_KEY
             - name: OPENAI_API_BASE
               value: "https://api.openai.com/v1"
             - name: AI_MODEL_NAME
               value: "gpt-3.5-turbo"
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fundval-secrets
+                  key: SMTP_PASSWORD
           readinessProbe:
             httpGet:
               path: /health
@@ -53,12 +84,6 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
-          volumeMounts:
-            - name: data
-              mountPath: /app/backend/data
-      volumes:
-        - name: data
-          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -90,7 +115,7 @@ spec:
                 name: fundval-service
                 port:
                   number: 80
-    - host: demo-fundval.onetool.app
+    - host: fund.onetool.app
       http:
         paths:
           - path: /
