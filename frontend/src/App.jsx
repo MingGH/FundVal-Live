@@ -173,14 +173,30 @@ export default function App() {
   const loadAccounts = async () => {
     const accs = await getAccounts();
     setAccounts(accs);
+    return accs;
   };
 
   useEffect(() => {
-    loadAccounts();
+    loadAccounts().then(accs => {
+      if (accs && accs.length > 0) {
+        // If currentAccount doesn't belong to this user, fix it
+        const validIds = new Set(accs.map(a => a.id));
+        if (!validIds.has(currentAccount) && currentAccount !== 0) {
+          const firstId = accs[0].id;
+          setCurrentAccount(firstId);
+          updatePreferences({ currentAccount: firstId }).catch(() => {});
+        }
+      }
+    });
   }, []);
 
   // Fetch account codes to prevent duplicates
   const fetchAccountCodes = async () => {
+    // Skip if accounts loaded but currentAccount doesn't belong to user
+    if (accounts.length > 0 && currentAccount !== 0) {
+      const validIds = new Set(accounts.map(a => a.id));
+      if (!validIds.has(currentAccount)) return;
+    }
     try {
         const data = await getAccountPositions(currentAccount);
         setAccountCodes(new Set((data.positions || []).map(p => p.code)));
@@ -190,8 +206,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (accounts.length === 0) return; // Wait for accounts to load first
     fetchAccountCodes();
-  }, [currentView, currentAccount]); // Refresh when switching views or accounts
+  }, [currentView, currentAccount, accounts]); // Refresh when switching views or accounts
   
   // --- Data Fetching ---
   

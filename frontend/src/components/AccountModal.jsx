@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Edit2 } from 'lucide-react';
+import { createAccount, updateAccount, deleteAccount } from '../services/api';
 
 export const AccountModal = ({ accounts, currentAccount, onClose, onRefresh, onSwitch }) => {
   const [newName, setNewName] = useState('');
@@ -20,22 +21,12 @@ export const AccountModal = ({ accounts, currentAccount, onClose, onRefresh, onS
     setError('');
 
     try {
-      const response = await fetch('/api/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), description: newDescription.trim() })
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || '创建失败');
-      }
-
+      await createAccount({ name: newName.trim(), description: newDescription.trim() });
       setNewName('');
       setNewDescription('');
       onRefresh();
     } catch (e) {
-      setError(e.message);
+      setError(e.response?.data?.detail || e.message || '创建失败');
     } finally {
       setLoading(false);
     }
@@ -48,19 +39,18 @@ export const AccountModal = ({ accounts, currentAccount, onClose, onRefresh, onS
     setError('');
 
     try {
-      const response = await fetch(`/api/accounts/${id}`, { method: 'DELETE' });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || '删除失败');
-      }
+      await deleteAccount(id);
 
       if (currentAccount === id) {
-        onSwitch(1); // 切换到默认账户
+        // Switch to the first remaining account
+        const remaining = accounts.filter(a => a.id !== id);
+        if (remaining.length > 0) {
+          onSwitch(remaining[0].id);
+        }
       }
       onRefresh();
     } catch (e) {
-      setError(e.message);
+      setError(e.response?.data?.detail || e.message || '删除失败');
     } finally {
       setLoading(false);
     }
@@ -76,21 +66,11 @@ export const AccountModal = ({ accounts, currentAccount, onClose, onRefresh, onS
     setError('');
 
     try {
-      const response = await fetch(`/api/accounts/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editName.trim(), description: editDescription.trim() })
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || '更新失败');
-      }
-
+      await updateAccount(id, { name: editName.trim(), description: editDescription.trim() });
       setEditingId(null);
       onRefresh();
     } catch (e) {
-      setError(e.message);
+      setError(e.response?.data?.detail || e.message || '更新失败');
     } finally {
       setLoading(false);
     }
@@ -167,27 +147,22 @@ export const AccountModal = ({ accounts, currentAccount, onClose, onRefresh, onS
                       )}
                     </div>
                     <div className="flex gap-2">
-                      {acc.id !== 1 && (
-                        <>
-                          <button
-                            onClick={() => startEdit(acc)}
-                            className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-                            title="编辑"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(acc.id)}
-                            disabled={loading}
-                            className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50"
-                            title="删除"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
-                      {acc.id === 1 && (
-                        <span className="text-xs text-slate-400 px-2 py-1">系统默认</span>
+                      <button
+                        onClick={() => startEdit(acc)}
+                        className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                        title="编辑"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      {accounts.length > 1 && (
+                        <button
+                          onClick={() => handleDelete(acc.id)}
+                          disabled={loading}
+                          className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50"
+                          title="删除"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
                   </>
