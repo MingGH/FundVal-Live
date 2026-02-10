@@ -6,6 +6,7 @@ export default function AdminUsers() {
   const [users, setUsers] = useState([]);
   const [form, setForm] = useState({ username: '', password: '', role: 'user' });
   const [error, setError] = useState('');
+  const [createdInfo, setCreatedInfo] = useState(null);
 
   const load = async () => {
     try { setUsers(await getUsers()); } catch { setError('加载用户列表失败'); }
@@ -15,8 +16,10 @@ export default function AdminUsers() {
   const handleCreate = async (e) => {
     e.preventDefault();
     setError('');
+    setCreatedInfo(null);
     try {
       await createUser(form);
+      setCreatedInfo({ username: form.username, password: form.password });
       setForm({ username: '', password: '', role: 'user' });
       load();
     } catch (err) { setError(err.response?.data?.detail || '创建失败'); }
@@ -54,6 +57,31 @@ export default function AdminUsers() {
           <UserPlus size={16} /> 创建
         </button>
       </form>
+
+      {createdInfo && (
+        <div style={{ background: '#f0fff4', border: '1px solid #c6f6d5', borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 14 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#276749' }}>✅ 用户创建成功</div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <span>用户名：<strong>{createdInfo.username}</strong></span>
+            <span>密码：<strong>{createdInfo.password}</strong></span>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`用户名: ${createdInfo.username}\n密码: ${createdInfo.password}`);
+                alert('已复制到剪贴板');
+              }}
+              style={{ padding: '2px 10px', borderRadius: 4, border: '1px solid #c6f6d5', background: '#fff', cursor: 'pointer', fontSize: 13 }}
+            >
+              复制
+            </button>
+            <button
+              onClick={() => setCreatedInfo(null)}
+              style={{ padding: '2px 10px', borderRadius: 4, border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer', fontSize: 13 }}
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )}
 
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
