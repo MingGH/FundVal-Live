@@ -13,12 +13,14 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     role: str = "user"
+    note: str = ""
 
 
 class UpdateUserRequest(BaseModel):
     is_active: Optional[bool] = None
     role: Optional[str] = None
     password: Optional[str] = None
+    note: Optional[str] = None
 
 
 @router.get("/admin/users")
@@ -26,7 +28,7 @@ def list_users(admin: dict = Depends(require_admin)):
     conn = get_db_connection()
     try:
         cur = dict_cursor(conn)
-        cur.execute("SELECT id, username, role, is_active, created_at FROM users ORDER BY id")
+        cur.execute("SELECT id, username, role, note, is_active, created_at FROM users ORDER BY id")
         return {"users": cur.fetchall()}
     finally:
         release_db_connection(conn)
@@ -40,8 +42,8 @@ def create_user(req: CreateUserRequest, admin: dict = Depends(require_admin)):
     try:
         cur = dict_cursor(conn)
         cur.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
-            (req.username, hash_password(req.password), req.role)
+            "INSERT INTO users (username, password_hash, role, note) VALUES (%s, %s, %s, %s)",
+            (req.username, hash_password(req.password), req.role, req.note)
         )
         user_id = cur.lastrowid
         # Create default account for new user
@@ -71,6 +73,8 @@ def update_user(user_id: int, req: UpdateUserRequest, admin: dict = Depends(requ
             cur.execute("UPDATE users SET role = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (req.role, user_id))
         if req.password:
             cur.execute("UPDATE users SET password_hash = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (hash_password(req.password), user_id))
+        if req.note is not None:
+            cur.execute("UPDATE users SET note = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (req.note, user_id))
         conn.commit()
         return {"status": "ok"}
     except Exception as e:

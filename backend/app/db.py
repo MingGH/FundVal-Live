@@ -236,6 +236,12 @@ def init_db():
         cur.execute("INSERT IGNORE INTO schema_version (version) VALUES (1)")
         conn.commit()
 
+    if current_version < 2:
+        logger.info("Running migration v2: add note column to users")
+        cur.execute("ALTER TABLE users ADD COLUMN note VARCHAR(255) DEFAULT '' AFTER role")
+        cur.execute("INSERT IGNORE INTO schema_version (version) VALUES (2)")
+        conn.commit()
+
     _seed_defaults(conn)
     conn.commit()
     release_db_connection(conn)

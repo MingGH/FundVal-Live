@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { UserPlus, Trash2, ToggleLeft, ToggleRight, KeyRound } from 'lucide-react';
+import { UserPlus, Trash2, ToggleLeft, ToggleRight, KeyRound, Pencil, Check, X } from 'lucide-react';
 import { getUsers, createUser, updateUser, deleteUser } from '../services/api';
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
-  const [form, setForm] = useState({ username: '', password: '', role: 'user' });
+  const [form, setForm] = useState({ username: '', password: '', role: 'user', note: '' });
   const [error, setError] = useState('');
   const [createdInfo, setCreatedInfo] = useState(null);
   const [resetPwUser, setResetPwUser] = useState(null);
   const [newPassword, setNewPassword] = useState('');
+  const [editingNote, setEditingNote] = useState(null); // { id, value }
 
   const load = async () => {
     try { setUsers(await getUsers()); } catch { setError('加载用户列表失败'); }
@@ -22,7 +23,7 @@ export default function AdminUsers() {
     try {
       await createUser(form);
       setCreatedInfo({ username: form.username, password: form.password });
-      setForm({ username: '', password: '', role: 'user' });
+      setForm({ username: '', password: '', role: 'user', note: '' });
       load();
     } catch (err) { setError(err.response?.data?.detail || '创建失败'); }
   };
@@ -49,18 +50,29 @@ export default function AdminUsers() {
     } catch (err) { setError(err.response?.data?.detail || '重置密码失败'); }
   };
 
+  const handleSaveNote = async (u) => {
+    if (editingNote === null) return;
+    try {
+      await updateUser(u.id, { note: editingNote.value });
+      setEditingNote(null);
+      load();
+    } catch (err) { setError(err.response?.data?.detail || '保存备注失败'); }
+  };
+
   const cellStyle = { padding: '8px 12px', borderBottom: '1px solid #eee', textAlign: 'left' };
 
   return (
-    <div style={{ padding: 24, maxWidth: 700 }}>
+    <div style={{ padding: 24, maxWidth: 850 }}>
       <h3 style={{ marginBottom: 16 }}>用户管理</h3>
       {error && <div style={{ color: '#e53e3e', marginBottom: 12, fontSize: 14 }}>{error}</div>}
 
       <form onSubmit={handleCreate} style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         <input placeholder="用户名" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} required
-          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d0d0d0', flex: 1, minWidth: 120 }} />
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d0d0d0', flex: 1, minWidth: 100 }} />
         <input placeholder="密码" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required
-          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d0d0d0', flex: 1, minWidth: 120 }} />
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d0d0d0', flex: 1, minWidth: 100 }} />
+        <input placeholder="备注（可选）" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })}
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d0d0d0', flex: 1, minWidth: 100 }} />
         <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}
           style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d0d0d0' }}>
           <option value="user">普通用户</option>
@@ -99,7 +111,7 @@ export default function AdminUsers() {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ background: '#f7f7f7' }}>
-            <th style={cellStyle}>ID</th><th style={cellStyle}>用户名</th><th style={cellStyle}>角色</th><th style={cellStyle}>状态</th><th style={cellStyle}>操作</th>
+            <th style={cellStyle}>ID</th><th style={cellStyle}>用户名</th><th style={cellStyle}>备注</th><th style={cellStyle}>角色</th><th style={cellStyle}>状态</th><th style={cellStyle}>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -107,6 +119,32 @@ export default function AdminUsers() {
             <tr key={u.id}>
               <td style={cellStyle}>{u.id}</td>
               <td style={cellStyle}>{u.username}</td>
+              <td style={cellStyle}>
+                {editingNote?.id === u.id ? (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <input value={editingNote.value} onChange={e => setEditingNote({ ...editingNote, value: e.target.value })}
+                      style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid #d0d0d0', fontSize: 13, width: 120 }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSaveNote(u); if (e.key === 'Escape') setEditingNote(null); }}
+                      autoFocus />
+                    <button onClick={() => handleSaveNote(u)} title="保存"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+                      <Check size={15} color="#38a169" />
+                    </button>
+                    <button onClick={() => setEditingNote(null)} title="取消"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+                      <X size={15} color="#a0a0a0" />
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ color: u.note ? '#333' : '#bbb', fontSize: 13 }}>{u.note || '—'}</span>
+                    <button onClick={() => setEditingNote({ id: u.id, value: u.note || '' })} title="编辑备注"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}>
+                      <Pencil size={13} color="#718096" />
+                    </button>
+                  </div>
+                )}
+              </td>
               <td style={cellStyle}>{u.role}</td>
               <td style={cellStyle}>{u.is_active ? '✅ 启用' : '🚫 禁用'}</td>
               <td style={cellStyle}>
